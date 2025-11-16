@@ -2,16 +2,16 @@ version: "3.9"
 
 services:
   frontend:
-    build: ./frontend
+    build: ./client
     ports:
-      - "3000:3000"
+      - "3500:3000"
     depends_on:
       - backend
     networks:
       - app-network
 
   backend:
-    build: ./backend
+    build: ./server
     ports:
       - "5000:5000"
     networks:
