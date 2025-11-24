@@ -1,15 +1,16 @@
-FROM node:18
 
+# Stage 1: build
+FROM node:18 AS build
 WORKDIR /app
-
 COPY package.json yarn.lock ./
 RUN yarn install
-
 COPY . .
-
 RUN yarn build
-RUN yarn global add serve
 
+# Stage 2: serve static files
+FROM node:18-alpine
+WORKDIR /app
+RUN yarn global add serve
+COPY --from=build /app/build ./build
 EXPOSE 3000
 CMD ["serve", "-s", "build", "-l", "3000"]
-

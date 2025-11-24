@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import wikiRouter from './routes/test-router.js';
 // Middleware imports 
 import morganMiddleware from './middleware/morganMiddleware.js';
+import corsMiddleware from './middleware/corsMiddleware.js';
 import logger from './config/loggerWinston.js';
 
 const app = express();
@@ -15,6 +16,7 @@ app.use(express.json()); // to parse JSON bodies
 
 // Middlewares
 app.use(morganMiddleware);
+app.use(corsMiddleware())
 
 // Endpoints
 app.use('/wiki', wikiRouter);
