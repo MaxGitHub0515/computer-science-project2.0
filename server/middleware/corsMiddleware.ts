@@ -1,22 +1,23 @@
 
 
+import type {CorsOptions} from "cors";
 import cors from "cors";
+import type { RequestHandler } from "express";
 
-const configCors = () => {
-    return cors({
-        origin: (origin, callback) =>{
-            const allowedOrigins = [
-                'http://localhost:3000', // front in development
-                'https://one3-chat-app.onrender.com' // app in production
-            ]
-             // if undefined or not in allowed list
-             //  only listed origins can make requests.
-             
+const configCors = (): RequestHandler => {
+        const allowedOrigins: string[] = [
+            'http://localhost:3000', // front in development
+            'https://among-bots.onrender.com' // app in production
+        ]
+        const corsOptions : CorsOptions = {
+            origin: (origin, callback) => {
+            // if undefined or not in allowed list
+            //  only listed origins can make requests.
             if(!origin || allowedOrigins.indexOf(origin) !== -1) {
                 callback(null, true) // if true - request is allowed
             } else {
                 callback(new Error("Not allowed by cors"))
-            }
+        }
         },
         //which HTTP actions users (or other websites) are allowed to perform on your server.
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -38,9 +39,8 @@ const configCors = () => {
         preflightContinue:false,
         maxAge: 600, // Cache preflight response for 10 minutes
         optionsSuccessStatus: 204, // ok/successful options requests
-
-
-    })
-}
+    }; 
+    return cors(configCors)
+};
 
 export default configCors;

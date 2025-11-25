@@ -1,10 +1,11 @@
 
 import morgan from "morgan";
-import logger from "../config/loggerWinston.js";
+import type { StreamOptions } from "morgan";
+import logger from "../config/loggerWinston"
 
 // Stream for writting morgan logs using winston
-const stream = {
-    write: (message) => logger.http(message.trim())
+const stream: StreamOptions = {
+    write: (message:string) => logger.http(message.trim())
 };
 
 // Skipping logging in certain environments
