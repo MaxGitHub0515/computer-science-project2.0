@@ -1,6 +1,5 @@
-
 # Stage 1: build
-FROM node:18 AS build
+FROM node:20 AS build
 WORKDIR /app
 COPY package.json yarn.lock ./
 RUN yarn install
@@ -8,7 +7,7 @@ COPY . .
 RUN yarn build
 
 # Stage 2: serve static files
-FROM node:18-alpine
+FROM node:20-alpine
 WORKDIR /app
 RUN yarn global add serve
 COPY --from=build /app/build ./build
