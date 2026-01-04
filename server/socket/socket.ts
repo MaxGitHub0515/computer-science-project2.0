@@ -615,6 +615,42 @@ export function registerSocketHandlers(io: Server) {
       }
     );
 
+    // game:reconnect - re-associate a playerId with a newly connected socket
+    socket.on(
+      "game:reconnect",
+      (
+        payload: { code?: string; playerId?: string },
+        callback: (response: any) => void
+      ) => {
+        try {
+          const code = payload.code?.toUpperCase();
+          const { playerId } = payload;
+          if (!code || !playerId) {
+            return callback({ ok: false, error: "code and playerId are required" });
+          }
+
+          const game = getGame(code);
+          if (!game) return callback({ ok: false, error: "Game not found" });
+
+          const player = game.players.find((p) => p.playerId === playerId);
+          if (!player) return callback({ ok: false, error: "Player not found" });
+
+          // Re-associate socket
+          socket.join(code);
+          socketToPlayer.set(socket.id, { code, playerId });
+
+          player.connected = true;
+
+          callback({ ok: true, game, playerId: player.playerId, alias: player.alias, colorId: player.colorId, host: player.playerId === game.hostPlayerId });
+
+          emitGameUpdate(io, game);
+        } catch (err) {
+          logger.error("Error in game:reconnect", err);
+          callback({ ok: false, error: "Internal server error" });
+        }
+      }
+    );
+
     //
     // disconnect handler
     //

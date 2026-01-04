@@ -16,6 +16,8 @@ export interface Round {
   votes: Vote[];
   participantIds: string[];
   eliminatedPlayerIds?: string[];  // NEW
+  // Optional unix ms timestamp when the current phase (SUBMITTING/VOTING) expires
+  expiresAt?: number;
 }
 
 export interface Submission {

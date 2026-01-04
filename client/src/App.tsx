@@ -14,6 +14,7 @@ import NotFoundPage from "./pages/404/NotFoundPage";
 
 function App() {
   const updateFromGame = useGameStore((s) => s.updateFromGame);
+  const setFromCreateOrJoin = useGameStore((s) => s.setFromCreateOrJoin);
 
   useEffect(() => {
     const handler = (game: any) => {
@@ -23,10 +24,38 @@ function App() {
 
     socket.on("game:update", handler);
 
+    // Try to reconnect if we have saved session
+    try {
+      const storedCode = localStorage.getItem("gameCode");
+      const storedPlayerId = localStorage.getItem("playerId");
+      if (storedCode && storedPlayerId) {
+        console.log("Attempting reconnect to", storedCode);
+        socket.emit(
+          "game:reconnect",
+          { code: storedCode, playerId: storedPlayerId },
+          (res: any) => {
+            if (res?.ok && res.game) {
+              // Use existing setter to populate store
+              setFromCreateOrJoin({
+                code: res.game.code,
+                playerId: res.playerId,
+                alias: res.alias,
+                colorId: res.colorId,
+                host: res.playerId === res.game.hostPlayerId,
+                game: res.game,
+              });
+            }
+          }
+        );
+      }
+    } catch (e) {
+      // ignore
+    }
+
     return () => {
       socket.off("game:update", handler);
     };
-  }, [updateFromGame]); // This WILL cause infinite loops with old Zustand setup
+  }, [updateFromGame, setFromCreateOrJoin]); // This WILL cause infinite loops with old Zustand setup
 
   return (
     <>

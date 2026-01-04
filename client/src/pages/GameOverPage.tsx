@@ -76,7 +76,7 @@ const GameOverPage = () => {
             <div className="card bg-success text-success-content mb-4">
               <div className="card-body">
                 <h2 className="card-title">Winners 🎉</h2>
-                <ul>
+                <ul role="list">
                   {alivePlayers.map((p) => (
                     <li key={p.playerId} className="flex items-center gap-2">
                       <span className="badge">{p.colorId}</span>
@@ -89,10 +89,10 @@ const GameOverPage = () => {
           )}
 
           {eliminatedPlayers.length > 0 && (
-            <div className="card bg-base-100">
+            <div className="card bg-base-100 mb-4">
               <div className="card-body">
                 <h2 className="card-title">Eliminated</h2>
-                <ul>
+                <ul role="list">
                   {eliminatedPlayers.map((p) => (
                     <li key={p.playerId} className="flex items-center gap-2 opacity-60">
                       <span className="badge">{p.colorId}</span>
@@ -103,17 +103,73 @@ const GameOverPage = () => {
               </div>
             </div>
           )}
+
+          {/* Round history / replay */}
+          {lastGameSnapshot.rounds.length > 0 && (
+            <div className="card bg-base-100">
+              <div className="card-body">
+                <h2 className="card-title">Round history</h2>
+                <div className="flex flex-col gap-4">
+                  {lastGameSnapshot.rounds.map((r) => {
+                    // Build vote tally
+                    const tally = new Map<string, number>();
+                    for (const v of r.votes) {
+                      tally.set(v.submissionId, (tally.get(v.submissionId) ?? 0) + 1);
+                    }
+
+                    return (
+                      <div key={r.roundNumber} className="border rounded p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="font-semibold">Round {r.roundNumber}</div>
+                          <div className="text-sm opacity-70">Target: {r.targetAlias}</div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {r.submissions.map((s) => {
+                            const player = lastGameSnapshot.players.find((p) => p.playerId === s.playerId);
+                            const votesFor = tally.get(s.submissionId) ?? 0;
+                            return (
+                              <div key={s.submissionId} className="flex items-start gap-3">
+                                <div className="min-w-[36px]"><span className="badge">{player?.colorId}</span></div>
+                                <div className="flex-1">
+                                  {s.content.startsWith("data:") ? (
+                                    <img src={s.content} alt={`Submission by ${player?.alias}`} className="max-h-48 w-full object-contain rounded" />
+                                  ) : (
+                                    <div className="text-base">{s.content}</div>
+                                  )}
+                                  <div className="text-sm opacity-70 mt-1">Votes: {votesFor}</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          <div className="mt-2 text-sm">
+                            <strong>Eliminated:</strong>{' '}
+                            {r.eliminatedPlayerIds && r.eliminatedPlayerIds.length > 0 ? (
+                              r.eliminatedPlayerIds.map((id) => lastGameSnapshot.players.find((p) => p.playerId === id)?.alias).join(', ')
+                            ) : (
+                              'None'
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {isHost ? (
-        <button className="btn btn-primary btn-lg" onClick={handleRestart}>
+        <button className="btn btn-primary btn-lg w-full sm:w-auto" aria-label="Restart game" onClick={handleRestart}>
           Restart game with same players
         </button>
       ) : (
         <div className="text-center">
           <p className="opacity-70 mb-2">Waiting for host to restart…</p>
-          <span className="loading loading-dots loading-md"></span>
+          <span className="loading loading-dots loading-md" aria-hidden="true"></span>
         </div>
       )}
     </div>

@@ -48,6 +48,11 @@ const RoundPage = () => {
   const [hasVoted, setHasVoted] = useState(false);
   const [hasSubmitted, setHasSubmitted] = useState(false);
 
+  // Progress notifications and accessible announcements
+  const [prevSubmissionCount, setPrevSubmissionCount] = useState<number | null>(null);
+  const [prevVoteCount, setPrevVoteCount] = useState<number | null>(null);
+  const [announceMsg, setAnnounceMsg] = useState<string | null>(null);
+
   const roundNum = roundNumber ? Number(roundNumber) : NaN;
 
   // Handle navigation based on game state
@@ -78,6 +83,8 @@ const RoundPage = () => {
     }
   }, [gameState]); // eslint-disable-line react-hooks/exhaustive-deps
 
+
+
   // Reset hasVoted and hasSubmitted when round changes
   useEffect(() => {
     setHasVoted(false);
@@ -102,6 +109,68 @@ const RoundPage = () => {
   const eliminatedPlayers = lastGameSnapshot?.players.filter((p) =>
     eliminatedPlayerIds.includes(p.playerId)
   ) || [];
+
+  // Countdown for the current phase (in ms)
+  const [timeLeftMs, setTimeLeftMs] = useState<number | null>(null);
+
+  useEffect(() => {
+    // Update loop that follows currentRound.expiresAt
+    if (!currentRound || !currentRound.expiresAt) {
+      setTimeLeftMs(null);
+      return;
+    }
+
+    // Capture expiresAt so the tick closure doesn't access `currentRound` directly (avoids TS 'possibly undefined')
+    const expiresAt = currentRound.expiresAt;
+
+    let mounted = true;
+    function tick() {
+      if (!mounted) return;
+      const ms = (expiresAt ?? 0) - Date.now();
+      setTimeLeftMs(ms > 0 ? ms : 0);
+      if (ms > 0) {
+        // schedule next tick nearer to real-time
+        setTimeout(tick, 500);
+      }
+    }
+
+    tick();
+    return () => {
+      mounted = false;
+    };
+  }, [currentRound?.expiresAt]);
+
+  // Notify users when others submit or vote and update progress UI
+  useEffect(() => {
+    // Derive currentRound here (avoid referencing variable declared later)
+    const r = lastGameSnapshot?.rounds.find((rr) => rr.roundNumber === roundNum);
+    if (!r || !lastGameSnapshot) return;
+
+    const submissionCount = r.submissions.length;
+    const voteCount = r.votes.length;
+
+    // Submissions progressed
+    if (
+      prevSubmissionCount != null &&
+      submissionCount > prevSubmissionCount
+    ) {
+      const remaining = Math.max(0, r.participantIds.length - submissionCount);
+      const msg = `${submissionCount} submitted • ${remaining} remaining`;
+      setAnnounceMsg(msg);
+      toast.success(msg);
+    }
+
+    // Votes progressed
+    if (prevVoteCount != null && voteCount > prevVoteCount) {
+      const remaining = Math.max(0, r.participantIds.length - voteCount);
+      const msg = `${voteCount} votes cast • ${remaining} remaining`;
+      setAnnounceMsg(msg);
+      toast.success(msg);
+    }
+
+    setPrevSubmissionCount(submissionCount);
+    setPrevVoteCount(voteCount);
+  }, [lastGameSnapshot, roundNum, prevSubmissionCount, prevVoteCount]);
 
   const wasIEliminated = playerId && eliminatedPlayerIds.includes(playerId);
   const amIAlive = lastGameSnapshot?.players.find((p) => p.playerId === playerId)?.alive ?? true;
@@ -192,6 +261,10 @@ const RoundPage = () => {
         </div>
       )}
 
+      {timeLeftMs != null && (
+        <div className="text-sm opacity-70">Time left: {Math.max(0, Math.ceil(timeLeftMs / 1000))}s</div>
+      )}
+
       {/* RESULTS PHASE - Show who was eliminated */}
       {isResultsPhase && (
         <div className="w-full max-w-2xl flex flex-col items-center gap-6">
@@ -242,13 +315,44 @@ const RoundPage = () => {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-              <textarea
-                className="textarea textarea-bordered w-full h-32"
-                placeholder="Write your submission..."
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-              />
-              <button className="btn btn-primary" disabled={submitting}>
+              {currentRound?.roundType === "IMAGE" ? (
+                <div className="flex flex-col gap-2">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        if (typeof reader.result === "string") {
+                          setContent(reader.result);
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+
+                  {content && content.startsWith("data:") && (
+                    <img src={content} alt="preview" className="max-h-48 w-full object-contain" />
+                  )}
+                </div>
+              ) : (
+                <textarea
+                  className="textarea textarea-bordered w-full h-32"
+                  placeholder="Write your submission..."
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                />
+              )}
+
+              <button
+                className="btn btn-primary w-full"
+                aria-label="Submit your response"
+                disabled={
+                  submitting || (timeLeftMs !== null && timeLeftMs <= 0)
+                }
+              >
                 {submitting ? "Submitting..." : "Submit"}
               </button>
             </form>
@@ -259,9 +363,20 @@ const RoundPage = () => {
           
           {currentRound && (
             <div className="mt-4 text-center">
-              <p className="text-sm">
+              <p className="text-sm mb-2">
                 Submissions: {currentRound.submissions.length} / {currentRound.participantIds.length}
               </p>
+
+              {/* Progress bar */}
+              <div className="w-full bg-base-300 rounded h-2" role="progressbar" aria-valuemin={0} aria-valuemax={currentRound.participantIds.length} aria-valuenow={currentRound.submissions.length} aria-label="Submission progress">
+                <div
+                  className="bg-primary h-2 rounded"
+                  style={{ width: `${(currentRound.submissions.length / Math.max(1, currentRound.participantIds.length)) * 100}%` }}
+                />
+              </div>
+
+              {/* Accessible announcement area */}
+              <div className="sr-only" aria-live="polite">{announceMsg}</div>
             </div>
           )}
         </div>
@@ -295,9 +410,18 @@ const RoundPage = () => {
           )}
 
           {currentRound && (
-            <p className="text-sm mb-4 text-center opacity-70">
-              Votes: {currentRound.votes.length} / {currentRound.participantIds.length}
-            </p>
+            <div className="mb-4 text-center">
+              <p className="text-sm mb-2 text-center opacity-70">
+                Votes: {currentRound.votes.length} / {currentRound.participantIds.length}
+              </p>
+
+              <div className="w-full bg-base-300 rounded h-2" role="progressbar" aria-valuemin={0} aria-valuemax={currentRound.participantIds.length} aria-valuenow={currentRound.votes.length} aria-label="Voting progress">
+                <div
+                  className="bg-secondary h-2 rounded"
+                  style={{ width: `${(currentRound.votes.length / Math.max(1, currentRound.participantIds.length)) * 100}%` }}
+                />
+              </div>
+            </div>
           )}
 
           <div className="grid gap-3">
@@ -307,19 +431,26 @@ const RoundPage = () => {
               votingSubmissions.map((s) => (
                 <button
                   key={s.submissionId}
-                  className={`card bg-base-100 shadow p-4 text-left transition ${
-                    hasVoted
+                  className={`card bg-base-100 shadow p-4 text-left transition w-full ${
+                    hasVoted || (timeLeftMs !== null && timeLeftMs <= 0)
                       ? "opacity-50 cursor-not-allowed"
                       : "hover:bg-base-300 hover:shadow-lg"
                   }`}
                   type="button"
+                  aria-label={`Vote for submission by color ${s.colorId}`}
                   onClick={() => handleVote(s.submissionId)}
-                  disabled={hasVoted}
+                  disabled={hasVoted || (timeLeftMs !== null && timeLeftMs <= 0)}
                 >
                   <div className="flex items-center gap-2 mb-2">
                     <span className="badge badge-lg">{s.colorId}</span>
                   </div>
-                  <div className="text-base">{s.content}</div>
+                  <div>
+                    {s.content.startsWith("data:") ? (
+                      <img src={s.content} alt="submission" className="max-h-48 w-full object-contain" />
+                    ) : (
+                      <div className="text-base">{s.content}</div>
+                    )}
+                  </div>
                 </button>
               ))
             )}
