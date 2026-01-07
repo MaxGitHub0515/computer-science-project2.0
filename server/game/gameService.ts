@@ -1,12 +1,22 @@
-// server/game/gameService.ts
-import type { Game, Round } from "./gameTypes";
+import type { Game, Round, Submission, Vote } from "./gameTypes";
+import { randomUUID } from "crypto";
+import {
+  scheduleAIForRound,
+  scheduleAIVotesForRound,
+  notifyAIsOfSubmission,
+  notifyAIsOfElimination,
+} from "./aiPlayer";
 
-// We'll need to import the socket.io instance to emit updates after the timer
-// This will be set from socket.ts
 let emitGameUpdateCallback: ((game: Game) => void) | null = null;
 
 export function setEmitGameUpdateCallback(callback: (game: Game) => void) {
   emitGameUpdateCallback = callback;
+}
+
+function pickRandom<T>(arr: readonly T[]): T {
+  if (arr.length === 0) throw new Error("pickRandom called with empty array");
+  const idx = Math.floor(Math.random() * arr.length);
+  return (arr[idx] ?? arr[0]) as T;
 }
 
 function allSubmissionsIn(round: Round): boolean {
@@ -17,7 +27,6 @@ function allVotesIn(round: Round): boolean {
   return round.votes.length >= round.participantIds.length;
 }
 
-// Timer management per game code
 const DEFAULT_SUBMIT_DURATION_MS = process.env.SUBMIT_DURATION_MS
   ? parseInt(process.env.SUBMIT_DURATION_MS, 10)
   : 30_000;
@@ -25,29 +34,28 @@ const DEFAULT_VOTE_DURATION_MS = process.env.VOTE_DURATION_MS
   ? parseInt(process.env.VOTE_DURATION_MS, 10)
   : 30_000;
 
-const timers = new Map<string, { submit?: NodeJS.Timeout; vote?: NodeJS.Timeout }>();
+type GameTimers = { submit?: NodeJS.Timeout; vote?: NodeJS.Timeout; results?: NodeJS.Timeout };
+const timers = new Map<string, GameTimers>();
 
 function clearTimersForGame(code: string) {
   const t = timers.get(code);
   if (!t) return;
   if (t.submit) clearTimeout(t.submit);
   if (t.vote) clearTimeout(t.vote);
+  if (t.results) clearTimeout(t.results);
   timers.delete(code);
 }
 
 function scheduleSubmitTimer(game: Game, round: Round, durationMs = DEFAULT_SUBMIT_DURATION_MS) {
   clearTimersForGame(game.code);
-  const expiresAt = Date.now() + durationMs;
-  round.expiresAt = expiresAt;
+  round.expiresAt = Date.now() + durationMs;
   const submitTimer = setTimeout(() => handleSubmitTimeout(game, round), durationMs);
   timers.set(game.code, { submit: submitTimer });
-  // emit update so clients receive expiresAt
   if (emitGameUpdateCallback) emitGameUpdateCallback(game);
 }
 
 function scheduleVoteTimer(game: Game, round: Round, durationMs = DEFAULT_VOTE_DURATION_MS) {
-  const expiresAt = Date.now() + durationMs;
-  round.expiresAt = expiresAt;
+  round.expiresAt = Date.now() + durationMs;
   const voteTimer = setTimeout(() => handleVoteTimeout(game, round), durationMs);
   const cur = timers.get(game.code) ?? {};
   cur.vote = voteTimer;
@@ -55,41 +63,64 @@ function scheduleVoteTimer(game: Game, round: Round, durationMs = DEFAULT_VOTE_D
   if (emitGameUpdateCallback) emitGameUpdateCallback(game);
 }
 
-function handleSubmitTimeout(game: Game, round: Round) {
-  // If already progressed, ignore
-  if (round.status !== "SUBMITTING") return;
+function scheduleResultsAdvance(game: Game, delayMs = 3000) {
+  const cur = timers.get(game.code) ?? {};
+  cur.results = setTimeout(() => advanceAfterResults(game), delayMs);
+  timers.set(game.code, cur);
+}
 
-  // Move to voting phase even if not everyone submitted
+function enterVotingPhase(game: Game, round: Round) {
   round.status = "VOTING";
   game.state = "ROUND_VOTING";
 
-  // Schedule vote timer
+  // Ensure every participant has a submission entry (empty string if they didn't submit).
+  // This allows players who didn't submit to be voted on and potentially eliminated.
+  for (const pid of round.participantIds ?? []) {
+    if (!round.submissions.find((s) => s.playerId === pid)) {
+      const placeholder: Submission = {
+        submissionId: `missing-${game.code}-${pid}-${round.roundNumber}-${randomUUID()}`,
+        playerId: pid,
+        content: "",
+        roundNumber: round.roundNumber,
+      };
+      round.submissions.push(placeholder);
+    }
+  }
+
   scheduleVoteTimer(game, round);
+
+  try {
+    const voteFn = (g: Game, r: Round, vote: Vote) => {
+      r.votes.push(vote);
+      onVotesUpdated(g, r);
+      if (emitGameUpdateCallback) emitGameUpdateCallback(g);
+    };
+    scheduleAIVotesForRound(game, round, voteFn);
+  } catch {}
 
   if (emitGameUpdateCallback) emitGameUpdateCallback(game);
 }
 
-function handleVoteTimeout(game: Game, round: Round) {
-  // If already completed, ignore
-  if (round.status !== "VOTING") return;
+function handleSubmitTimeout(game: Game, round: Round) {
+  if (round.status !== "SUBMITTING") return;
 
-  // Finalize voting with whatever votes exist
+  clearTimersForGame(game.code);
+  enterVotingPhase(game, round);
+}
+
+function handleVoteTimeout(game: Game, round: Round) {
+  if (round.status !== "VOTING") return;
   finalizeVoting(game, round);
 }
 
 function finalizeVoting(game: Game, round: Round) {
   if (round.status === "COMPLETED") return;
 
-  // Mark round as completed
   round.status = "COMPLETED";
 
-  // Tally votes by submissionId
   const tally = new Map<string, number>();
-  for (const v of round.votes) {
-    tally.set(v.submissionId, (tally.get(v.submissionId) ?? 0) + 1);
-  }
+  for (const v of round.votes) tally.set(v.submissionId, (tally.get(v.submissionId) ?? 0) + 1);
 
-  // Find submission(s) with most votes (handle ties)
   let maxVotes = 0;
   let eliminatedSubmissionIds: string[] = [];
 
@@ -102,122 +133,119 @@ function finalizeVoting(game: Game, round: Round) {
     }
   }
 
-  // Simple tie-breaker: if multiple tied with >0 votes, pick one at random to eliminate
+  // If there is a multi-way tie for the highest votes, treat as a tied vote: nobody is eliminated.
   if (eliminatedSubmissionIds.length > 1) {
-    const choice = eliminatedSubmissionIds[Math.floor(Math.random() * eliminatedSubmissionIds.length)];
-    eliminatedSubmissionIds = [choice];
+    eliminatedSubmissionIds = [];
+    maxVotes = 0;
   }
 
-  // Eliminate player(s) with most votes
   const eliminatedPlayerIds: string[] = [];
   for (const submissionId of eliminatedSubmissionIds) {
     const submission = round.submissions.find((s) => s.submissionId === submissionId);
-    if (submission) {
-      const player = game.players.find((p) => p.playerId === submission.playerId);
-      if (player && player.alive) {
-        player.alive = false;
-        eliminatedPlayerIds.push(player.playerId);
-      }
+    if (!submission) continue;
+
+    const player = game.players.find((p) => p.playerId === submission.playerId);
+    if (player && player.alive) {
+      player.alive = false;
+      eliminatedPlayerIds.push(player.playerId);
     }
   }
 
-  // Store eliminated player IDs on the round for display
   round.eliminatedPlayerIds = eliminatedPlayerIds;
 
-  // Move to RESULTS state to show elimination screen
+  try {
+    notifyAIsOfElimination(game, round);
+  } catch {}
+
   game.state = "ROUND_RESULTS";
 
-  // Clear timers for the game
   clearTimersForGame(game.code);
-
-  // Schedule auto-advance after 3 seconds
-  setTimeout(() => {
-    advanceAfterResults(game);
-  }, 3000);
+  scheduleResultsAdvance(game, 3000);
 
   if (emitGameUpdateCallback) emitGameUpdateCallback(game);
 }
 
-/**
- * Called after a submission is added.
- * If all participants have submitted, move the game to VOTING.
- */
-export function onSubmissionUpdated(game: Game, round: Round) {
+export function onSubmissionUpdated(game: Game, round: Round, submission?: Submission) {
+  try {
+    const submitFn = (g: Game, r: Round, sub: Submission) => {
+      r.submissions.push(sub);
+      onSubmissionUpdated(g, r, sub);
+      if (emitGameUpdateCallback) emitGameUpdateCallback(g);
+    };
+    notifyAIsOfSubmission(game, round, submission, submitFn);
+  } catch {}
+
   if (!allSubmissionsIn(round)) return;
 
-  // Cancel submit timer
   clearTimersForGame(game.code);
-
-  round.status = "VOTING";
-  game.state = "ROUND_VOTING";
-
-  // Schedule vote timer
-  scheduleVoteTimer(game, round);
-
-  if (emitGameUpdateCallback) emitGameUpdateCallback(game);
+  enterVotingPhase(game, round);
 }
 
-/**
- * Called after a vote is added.
- * When all participants have voted:
- *  - finalize voting (tally, eliminate)
- */
 export function onVotesUpdated(game: Game, round: Round) {
   if (!allVotesIn(round)) return;
 
-  // Cancel vote timer
   const t = timers.get(game.code);
   if (t?.vote) {
     clearTimeout(t.vote);
-    t.vote = undefined;
+    delete t.vote; // exactOptionalPropertyTypes-safe
+    timers.set(game.code, t);
   }
 
   finalizeVoting(game, round);
 }
 
-/**
- * After showing results for 3 seconds, determine next state:
- * - If 2 or fewer players alive: GAME_OVER
- * - Otherwise: start next round
- */
 function advanceAfterResults(game: Game) {
-  const alivePlayers = game.players.filter((p) => p.alive);
-  const aliveCount = alivePlayers.length;
+  const aliveHumans = game.players.filter((p) => p.alive && !p.isAI).length;
+  const aliveAIs = game.players.filter((p) => p.alive && p.isAI).length;
 
-  if (aliveCount <= 2) {
-    // Game over - 2 or fewer players remaining
+  // Special-case: if it's a 1 vs 1 (one AI alive and one human alive), the AI automatically wins.
+  if (aliveAIs === 1 && aliveHumans === 1) {
+    game.winner = "AIS";
     game.state = "GAME_OVER";
-    // Clear any timers just in case
     clearTimersForGame(game.code);
-  } else {
-    // Start next round
-    const nextRound = startRoundForGame(game, "TEXT");
-    if (!nextRound) {
-      // Failed to start round, end game
-      game.state = "GAME_OVER";
-    }
+    if (emitGameUpdateCallback) emitGameUpdateCallback(game);
+    return;
   }
 
-  // Emit the update to all clients
-  if (emitGameUpdateCallback) {
-    emitGameUpdateCallback(game);
+  if (aliveAIs === 0) {
+    game.winner = "HUMANS";
+    game.state = "GAME_OVER";
+    clearTimersForGame(game.code);
+    if (emitGameUpdateCallback) emitGameUpdateCallback(game);
+    return;
   }
+
+  if (aliveAIs > aliveHumans) {
+    game.winner = "AIS";
+    game.state = "GAME_OVER";
+    clearTimersForGame(game.code);
+    if (emitGameUpdateCallback) emitGameUpdateCallback(game);
+    return;
+  }
+
+  const nextRound = startRoundForGame(game, "TEXT");
+  if (!nextRound) {
+    game.state = "GAME_OVER";
+    clearTimersForGame(game.code);
+  }
+
+  if (emitGameUpdateCallback) emitGameUpdateCallback(game);
 }
 
-/**
- * Helper to start a new round with all currently alive players.
- * Returns the new round, or null if unable to start.
- */
-function startRoundForGame(game: Game, roundType: "TEXT" | "IMAGE" = "TEXT"): Round | null {
+export function startRoundForGame(game: Game, roundType: "TEXT" | "IMAGE" = "TEXT"): Round | null {
   const alivePlayers = game.players.filter((p) => p.alive);
-  if (alivePlayers.length === 0) {
-    return null;
-  }
+  if (game.players.length === 0) return null;
+
+  const humanPlayers = game.players.filter((p) => !p.isAI);
+  const targetPool = humanPlayers.length > 0 ? humanPlayers : game.players;
 
   const nextRoundNumber = game.roundNumber + 1;
 
-  // Randomly pick one alive player as the target
-  const targetPlayer = alivePlayers[Math.floor(Math.random() * alivePlayers.length)];
+  // Avoid picking the same target alias twice in a row.
+  const prevTargetAlias = game.rounds?.[game.rounds.length - 1]?.targetAlias;
+  const filteredPool = prevTargetAlias ? targetPool.filter((p) => p.alias !== prevTargetAlias) : targetPool;
+  const finalPool = filteredPool.length > 0 ? filteredPool : targetPool;
+  const targetPlayer = pickRandom(finalPool);
 
   const round: Round = {
     roundNumber: nextRoundNumber,
@@ -234,8 +262,16 @@ function startRoundForGame(game: Game, roundType: "TEXT" | "IMAGE" = "TEXT"): Ro
   game.rounds.push(round);
   game.state = "ROUND_SUBMITTING";
 
-  // Schedule submit timeout
   scheduleSubmitTimer(game, round);
+
+  try {
+    const submitFn = (g: Game, r: Round, sub: Submission) => {
+      r.submissions.push(sub);
+      onSubmissionUpdated(g, r, sub);
+      if (emitGameUpdateCallback) emitGameUpdateCallback(g);
+    };
+    scheduleAIForRound(game, round, submitFn);
+  } catch {}
 
   return round;
 }

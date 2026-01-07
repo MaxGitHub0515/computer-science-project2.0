@@ -55,6 +55,19 @@ const RoundPage = () => {
 
   const roundNum = roundNumber ? Number(roundNumber) : NaN;
 
+  const COLOR_BORDER: Record<string, string> = {
+    red: "border-red-500",
+    blue: "border-blue-500",
+    green: "border-green-500",
+    yellow: "border-yellow-400",
+    purple: "border-purple-500",
+    orange: "border-orange-400",
+    pink: "border-pink-400",
+    cyan: "border-cyan-400",
+    lime: "border-lime-400",
+    teal: "border-teal-400",
+  };
+
   // Handle navigation based on game state
   useEffect(() => {
   if (!code || Number.isNaN(roundNum)) return;
@@ -257,7 +270,7 @@ const RoundPage = () => {
 
       {targetAlias && !isResultsPhase && (
         <div className="alert alert-info max-w-md">
-          <span>Target player: <strong>{targetAlias}</strong></span>
+          <span>Describe <strong>{targetAlias}</strong> in a short sentence.</span>
         </div>
       )}
 
@@ -431,7 +444,9 @@ const RoundPage = () => {
               votingSubmissions.map((s) => (
                 <button
                   key={s.submissionId}
-                  className={`card bg-base-100 shadow p-4 text-left transition w-full ${
+                  className={`card bg-base-100 shadow p-4 text-left transition w-full border-2 ${
+                    COLOR_BORDER[s.colorId] ?? "border-neutral"
+                  } ${
                     hasVoted || (timeLeftMs !== null && timeLeftMs <= 0)
                       ? "opacity-50 cursor-not-allowed"
                       : "hover:bg-base-300 hover:shadow-lg"

@@ -10,7 +10,7 @@ Gameplay changes:
 - **Reconnection/resume handling** — disconnect marks player as disconnected but there's no explicit reconnect flow to re-associate the same playerId and restore state.
 - **Tie handling & scoring** — ties result in "no one eliminated"; no scoring/leaderboard or incentive mechanics.
 - **Image round support is only typed** — server supports roundType but client doesn't offer uploads or display for image rounds.
-
+- **Added ai players** -- Server talks to chat gpt via an api key set in .env that needs to contain: OPENAI_API_KEY=***** OPENAI_MODEL=gpt-5.2
 
 UI Changes:
 - RoundPage:
@@ -18,6 +18,7 @@ UI Changes:
     - Count announcements and toasts when submissions/votes increase ("N submitted • M remaining").
     - Accessible sr-only live region (`aria-live="polite"`) for assistive tech.
     - Submit button made full-width and given aria-label; voting buttons made full-width, given aria-label, and larger tap targets.
+    - Colored border for easier identification
 - GameOverPage:
     - Added round history / replay: per round show target, submissions (text or image), votes tally, and eliminated players.
     - Accessibility: lists have role="list", images have alt text, restart button gets aria-label.
