@@ -37,6 +37,8 @@ export interface RoundDTO {
   votes: VoteDTO[];
   participantIds: string[];
   eliminatedPlayerIds?: string[];
+  // Optional unix ms timestamp when the current phase expires
+  expiresAt?: number;
 }
 
 export interface GameDTO {
