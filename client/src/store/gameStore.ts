@@ -36,6 +36,14 @@ export const useGameStore = create<GameClientState>()((set) => ({
   lastGameSnapshot: null,
 
   setFromCreateOrJoin(payload) {
+    // Persist code/playerId so we can attempt reconnects after reload
+    try {
+      localStorage.setItem("gameCode", payload.code);
+      localStorage.setItem("playerId", payload.playerId);
+    } catch (e) {
+      // ignore storage errors
+    }
+
     set({
       code: payload.code,
       playerId: payload.playerId,
@@ -58,6 +66,13 @@ export const useGameStore = create<GameClientState>()((set) => ({
   },
 
   reset() {
+    try {
+      localStorage.removeItem("gameCode");
+      localStorage.removeItem("playerId");
+    } catch (e) {
+      // ignore
+    }
+
     set({
       code: null,
       playerId: null,

@@ -31,7 +31,7 @@
     "react-toastify": "^11.0.5",
     "recharts": "^3.1.0",
     "socket.io-client": "^4.8.1",
-    "vercel": "^41.0.2",
+    "vercel": "^25.2.0",
     "yup": "^1.6.1",
     "zustand": "^5.0.6"
   },
