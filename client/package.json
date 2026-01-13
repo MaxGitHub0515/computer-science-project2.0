@@ -18,7 +18,7 @@
     "axios": "^1.7.7",
     "emoji-picker-react": "^4.9.2",
     "formik": "^2.4.6",
-    "framer-motion": "^12.23.26",
+    "framer-motion": "^12.24.10",
     "lucide-react": "^0.459.0",
     "postcss": "^8.5.6",
     "react": "^19.1.0",

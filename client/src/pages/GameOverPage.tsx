@@ -19,6 +19,12 @@ interface RestartResponse {
   };
 }
 
+interface GameGetResponse {
+  ok: boolean;
+  error?: string;
+  game?: GameDTO;
+}
+
 const COLOR_BADGES: Record<string, string> = {
   red: "bg-red-500/90 text-white",
   blue: "bg-blue-500/90 text-white",
@@ -45,26 +51,53 @@ const GameOverPage = () => {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
 
-  // Separate selectors
+  // Store selectors (Selektoren / seçiciler)
   const playerId = useGameStore((s) => s.playerId);
-  const isHost = useGameStore((s) => s.isHost);
+  const storeIsHost = useGameStore((s) => s.isHost);
   const lastGameSnapshot = useGameStore((s) => s.lastGameSnapshot);
   const gameState = useGameStore((s) => s.gameState);
   const roundNumber = useGameStore((s) => s.roundNumber);
+  const updateFromGame = useGameStore((s) => s.updateFromGame);
 
-  // Navigate when game restarts (for non-host players)
+  // 1) GameOver sayfası açılınca oyunu tekrar çek (Initialer Fetch / ilk çekiş)
+  useEffect(() => {
+    if (!code) return;
+
+    socket.emit("game:get", { code }, (res: GameGetResponse) => {
+      if (!res.ok || !res.game) {
+        toast.error(res.error ?? "Could not load game");
+        return;
+      }
+      updateFromGame(res.game);
+    });
+  }, [code, updateFromGame]);
+
+  // 2) Non-host oyuncular için restart olunca otomatik round'a geç (Navigation / yönlendirme)
   useEffect(() => {
     if (!lastGameSnapshot || !code) return;
 
-    // If game state changes from GAME_OVER to a round state, navigate to the round
     if (gameState === "ROUND_SUBMITTING" || gameState === "ROUND_VOTING") {
-      console.log("Game restarted, navigating to round", roundNumber);
       navigate(`/game/${code}/round/${roundNumber}`, { replace: true });
     }
   }, [gameState, roundNumber, code, lastGameSnapshot, navigate]);
 
+  // 3) Host'u snapshot'tan da doğrula (Fallback / yedek)
+  const snapshotIsHost =
+    !!lastGameSnapshot &&
+    !!playerId &&
+    !!lastGameSnapshot.players.find(
+      (p) =>
+        p.playerId === playerId &&
+        (((p as any).host === true) ||
+          ((p as any).isHost === true) ||
+          ((p as any).role === "HOST"))
+    );
+
+  const isHost = storeIsHost || snapshotIsHost;
+
   const handleRestart = () => {
     if (!code || !playerId) return;
+
     socket.emit(
       "game:restart",
       { code, playerId, roundType: "TEXT" },
@@ -74,7 +107,6 @@ const GameOverPage = () => {
           return;
         }
         toast.success("Game restarted");
-        // Navigate immediately for the host
         navigate(`/game/${res.game.code}/round/${res.round.roundNumber}`, {
           replace: true,
         });
@@ -82,12 +114,12 @@ const GameOverPage = () => {
     );
   };
 
-  // Show game results if available
+  // Results
   const alivePlayers = lastGameSnapshot?.players.filter((p) => p.alive) || [];
   const eliminatedPlayers =
     lastGameSnapshot?.players.filter((p) => !p.alive) || [];
 
-  // Host / summary info
+  // Host alias (Host-Spieler / host oyuncu)
   const hostPlayer =
     lastGameSnapshot?.players.find(
       (p) =>
@@ -131,9 +163,7 @@ const GameOverPage = () => {
             </h1>
             <p className="text-sm text-slate-400 mt-1">
               Host:{" "}
-              <span className="font-semibold text-slate-200">
-                {hostAlias}
-              </span>
+              <span className="font-semibold text-slate-200">{hostAlias}</span>
             </p>
             {code && (
               <p className="text-xs text-slate-500">
@@ -149,6 +179,7 @@ const GameOverPage = () => {
                 {lastGameSnapshot?.roundNumber ?? "-"}
               </span>
             </span>
+
             {isHost ? (
               <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                 You are the host
@@ -177,10 +208,7 @@ const GameOverPage = () => {
                 </h2>
                 <ul className="space-y-1 text-sm">
                   {alivePlayers.map((p) => (
-                    <li
-                      key={p.playerId}
-                      className="flex items-center gap-3"
-                    >
+                    <li key={p.playerId} className="flex items-center gap-3">
                       <div
                         className={`h-3 w-3 rounded-full ${
                           COLOR_DOT[p.colorId] ?? "bg-slate-200"
@@ -188,8 +216,7 @@ const GameOverPage = () => {
                       />
                       <span
                         className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${
-                          COLOR_BADGES[p.colorId] ??
-                          "bg-slate-500/70 text-white"
+                          COLOR_BADGES[p.colorId] ?? "bg-slate-500/70 text-white"
                         }`}
                       >
                         {p.colorId}
