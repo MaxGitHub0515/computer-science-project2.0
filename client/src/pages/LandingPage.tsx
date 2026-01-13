@@ -2,6 +2,7 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import { motion } from "framer-motion"; 
 
 import { socket } from "../lib/socket";
 import { useGameStore } from "../store/gameStore";
@@ -24,6 +25,7 @@ const LandingPage = () => {
 
   const [alias, setAlias] = useState("");
   const [joinCode, setJoinCode] = useState("");
+
 
   const handleCreate = (e: FormEvent) => {
     e.preventDefault();
@@ -68,33 +70,104 @@ const LandingPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-8 bg-base-200">
-      <h1 className="text-4xl font-bold">Among Bots</h1>
+    <motion.div
+      className="relative min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 px-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.4 }}
+    >
 
-      <form onSubmit={handleCreate} className="flex flex-col gap-3">
-        <input
-          className="input input-bordered"
-          placeholder="Your alias"
-          value={alias}
-          onChange={(e) => setAlias(e.target.value)}
-        />
-        <button type="submit" className="btn btn-primary w-full">
-          Create game
-        </button>
-      </form>
+      {/* Neon glow blobs */}
+      <motion.div
+        className="absolute -left-40 -top-20 w-96 h-96 bg-fuchsia-600/40 blur-3xl rounded-full"
+        animate={{ x: [0, 25, -10, 0], y: [0, 15, -5, 0] }}
+        transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+      />
 
-      <form onSubmit={handleJoin} className="flex flex-col gap-3">
-        <input
-          className="input input-bordered"
-          placeholder="Game code (ABCD)"
-          value={joinCode}
-          onChange={(e) => setJoinCode(e.target.value)}
-        />
-        <button type="submit" className="btn btn-secondary w-full">
-          Join game
-        </button>
-      </form>
-    </div>
+      <motion.div
+        className="absolute -right-40 bottom-0 w-96 h-96 bg-indigo-600/40 blur-3xl rounded-full"
+        animate={{ x: [0, -20, 10, 0], y: [0, -10, 5, 0] }}
+        transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
+      />
+
+      {/* CARD */}
+      <motion.div
+        className="relative z-10 w-full max-w-md p-8 rounded-3xl shadow-2xl bg-slate-900/70 border border-white/10 backdrop-blur-xl"
+        initial={{ opacity: 0, y: 30, scale: 0.96 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.45, ease: "easeOut" }}
+      >
+        {/* Title */}
+        <motion.h1
+          className="text-4xl font-extrabold text-center mb-8 bg-gradient-to-r from-indigo-400 via-fuchsia-400 to-pink-300 bg-clip-text text-transparent"
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          Among Bots
+        </motion.h1>
+
+        {/* CREATE FORM */}
+        <motion.form
+          onSubmit={handleCreate}
+          className="flex flex-col gap-3"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+        >
+          <input
+            className="input input-bordered bg-slate-900/50 border-slate-700 text-slate-100 focus:border-fuchsia-400"
+            placeholder="Your alias"
+            value={alias}
+            onChange={(e) => setAlias(e.target.value)}
+          />
+
+          <motion.button
+            type="submit"
+            className="btn w-full border-none text-white bg-gradient-to-r from-indigo-500 to-fuchsia-500"
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.96 }}
+          >
+            Create game
+          </motion.button>
+        </motion.form>
+
+        {/* Divider */}
+        <div className="my-6 flex items-center gap-3 text-xs text-slate-500">
+          <div className="h-px flex-1 bg-slate-700" />
+          <span>or join</span>
+          <div className="h-px flex-1 bg-slate-700" />
+        </div>
+
+        {/* JOIN FORM */}
+        <motion.form
+          onSubmit={handleJoin}
+          className="flex flex-col gap-3"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+        >
+          <input
+            className="input input-bordered bg-slate-900/50 border-slate-700 text-slate-100 tracking-[0.3em] uppercase focus:border-fuchsia-400 text-center"
+            placeholder="ABCD"
+            value={joinCode}
+            onChange={(e) => setJoinCode(e.target.value)}
+          />
+
+          <motion.button
+            type="submit"
+            className="btn w-full border-none text-white bg-gradient-to-r from-pink-500 to-fuchsia-500"
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.96 }}
+          >
+            Join game
+          </motion.button>
+        </motion.form>
+
+        <p className="mt-6 text-center text-[11px] text-slate-500">
+          Social deduction with AI impostors — trust no one.
+        </p>
+      </motion.div>
+    </motion.div>
   );
 };
 

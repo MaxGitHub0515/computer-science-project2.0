@@ -11,15 +11,24 @@ import LobbyPage from "./pages/LobbyPage";
 import RoundPage from "./pages/RoundPage";
 import GameOverPage from "./pages/GameOverPage";
 import NotFoundPage from "./pages/404/NotFoundPage";
+import type { GameDTO } from "./types/game";
 
 function App() {
   const updateFromGame = useGameStore((s) => s.updateFromGame);
   const setFromCreateOrJoin = useGameStore((s) => s.setFromCreateOrJoin);
 
   useEffect(() => {
-    const handler = (game: any) => {
-      console.log("game:update", game);
-      updateFromGame(game);
+    
+    const handler = (payload: GameDTO | { game: GameDTO }) => {
+      const game =
+        (payload as any)?.game && (payload as any).game.code
+          ? (payload as any).game
+          : payload;
+
+      if (!game || !(game as any).code) return;
+
+      console.log("game:update received", game);
+      updateFromGame(game as GameDTO);
     };
 
     socket.on("game:update", handler);
@@ -66,7 +75,8 @@ function App() {
         <Route path="/game/:code/over" element={<GameOverPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
-      <Toaster />
+
+      <Toaster position="top-right" />
     </>
   );
 }
