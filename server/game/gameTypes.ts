@@ -25,6 +25,7 @@ export interface Submission {
   playerId: string;
   content: string;
   roundNumber: number;
+  submittedAt?: number;
 }
 
 export interface Vote {
@@ -58,6 +59,8 @@ export interface Player {
     teamId?: string;
     memory?: AIMemory;
   };
+  score: number;
+  missedSubmissions: number;
 }
 
 export interface Game {

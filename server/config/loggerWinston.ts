@@ -1,32 +1,28 @@
 
-import winston, {transports as WinstonTransports} from 'winston';
-import  type { 
-    Logger, 
-    LoggerOptions, 
-} from 'winston';
+import winston from 'winston';
 
-const { 
-    timestamp, errors, splat, 
-    json, colorize, simple, combine
-} = winston.format;
+type Logger = ReturnType<typeof winston.createLogger>;
+type LoggerOptions = Parameters<typeof winston.createLogger>[0];
 
-const logFormat = combine(
-    timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    errors({ stack: true }),
-    splat(),
-    json()
+const format = winston.format;
+
+const logFormat = format.combine(
+    format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    format.errors({ stack: true }),
+    format.splat(),
+    format.json()
 )
+
 // Transports config (where logs are sent)
-const transports: WinstonTransports.ConsoleTransportInstance[] = [
+const transports = [
     // Log/Console the transport development readability
-    new WinstonTransports.Console({
-        format: combine(
-            colorize(),
-            simple()
-            
+    new winston.transports.Console({
+        format: format.combine(
+            format.colorize(),
+            format.simple()
         )
     })
-]
+];
 
 
 // Loger Instance
