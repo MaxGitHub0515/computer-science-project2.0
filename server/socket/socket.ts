@@ -77,6 +77,8 @@ function ensureAutoAIs(game: Game) {
       alive: true,
       connected: false,
       isAI: true,
+      score: 0,
+      missedSubmissions: 0,
       aiData: {
         teamId: "impostors",
         memory: makeEmptyMemory(),
@@ -116,6 +118,8 @@ export function registerSocketHandlers(io: Server) {
           colorId,
           alive: true,
           connected: true,
+          score: 0,
+          missedSubmissions: 0,
         };
 
         const game: Game = { ...emptyGame, players: [hostPlayer] };
@@ -163,6 +167,8 @@ export function registerSocketHandlers(io: Server) {
             alive: true,
             connected: false,
             isAI: true,
+            score: 0,
+            missedSubmissions: 0,
             aiData: {
               teamId: teamId ?? "impostors",
               ...(apiKeyNorm ? { apiKey: apiKeyNorm } : {}),
@@ -194,7 +200,7 @@ export function registerSocketHandlers(io: Server) {
         const playerId = randomUUID();
         const colorId = assignColor(game);
 
-        const player: Player = { playerId, alias, colorId, alive: true, connected: true };
+        const player: Player = { playerId, alias, colorId, alive: true, connected: true, score: 0, missedSubmissions: 0 };
         game.players.push(player);
 
         socket.join(code);
@@ -320,6 +326,7 @@ export function registerSocketHandlers(io: Server) {
             playerId,
             content,
             roundNumber: Number(roundNumber),
+            submittedAt: Date.now(),
           };
 
           round.submissions.push(submission);

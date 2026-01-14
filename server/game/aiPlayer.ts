@@ -319,6 +319,7 @@ async function handleAISubmit(
     playerId: aiPlayer.playerId,
     content,
     roundNumber: round.roundNumber,
+    submittedAt: Date.now(),
   };
 
   if (submitFn) submitFn(game, round, submission);

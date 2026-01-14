@@ -78,10 +78,10 @@ function enterVotingPhase(game: Game, round: Round) {
   for (const pid of round.participantIds ?? []) {
     if (!round.submissions.find((s) => s.playerId === pid)) {
       const placeholder: Submission = {
-        submissionId: `missing-${game.code}-${pid}-${round.roundNumber}-${randomUUID()}`,
+        submissionId: `missing-${game.code ?? "unknown"}-${pid}-${round.roundNumber ?? 0}-${randomUUID()}`,
         playerId: pid,
         content: "",
-        roundNumber: round.roundNumber,
+        roundNumber: round.roundNumber ?? 0,
       };
       round.submissions.push(placeholder);
     }
@@ -118,6 +118,57 @@ function finalizeVoting(game: Game, round: Round) {
 
   round.status = "COMPLETED";
 
+  // === SCORING LOGIC ===
+  const PARTITICATION_POINTS = 10;
+  const FAST_BONUSES = [5, 3, 1]; // 1st, 2nd, 3rd place
+  const NO_SUBMISSION_PENALTY = 5;
+
+  // Get all non-empty submissions sorted by submittedAt for fast bonus calculation
+  const submissionsWithTime = round.submissions
+    .filter((s) => s.submittedAt != null && s.content.trim().length > 0)
+    .sort((a, b) => (a.submittedAt ?? 0) - (b.submittedAt ?? 0));
+
+  // Award fast bonuses to top 3 fastest non-empty submissions
+  for (let i = 0; i < Math.min(FAST_BONUSES.length, submissionsWithTime.length); i++) {
+    const submission = submissionsWithTime[i];
+    const bonus = FAST_BONUSES[i];
+    if (!submission || bonus === undefined) continue;
+    const player = game.players.find((p) => p.playerId === submission.playerId);
+    if (player && submission.content.trim().length > 0) {
+      player.score = (player.score ?? 0) + bonus;
+    }
+  }
+
+  // Process all submissions for participation points and missed submission tracking
+  for (const submission of round.submissions) {
+    const player = game.players.find((p) => p.playerId === submission.playerId);
+    if (!player) continue;
+
+    // Track missed submissions
+    if (submission.content.trim().length === 0) {
+      // Empty submission - increment missed submissions counter
+      player.missedSubmissions = (player.missedSubmissions ?? 0) + 1;
+      // Apply penalty for no submission
+      player.score = (player.score ?? 0) - NO_SUBMISSION_PENALTY;
+    } else {
+      // Non-empty submission - award participation points and reset missed counter
+      player.score = (player.score ?? 0) + PARTITICATION_POINTS;
+      player.missedSubmissions = 0;
+    }
+  }
+
+  // Check for players to eliminate due to 2+ consecutive missed submissions
+  for (const player of game.players) {
+    if (player.alive && (player.missedSubmissions ?? 0) >= 2) {
+      player.alive = false;
+      round.eliminatedPlayerIds = round.eliminatedPlayerIds ?? [];
+      if (!round.eliminatedPlayerIds.includes(player.playerId)) {
+        round.eliminatedPlayerIds.push(player.playerId);
+      }
+    }
+  }
+  // === END SCORING LOGIC ===
+
   const tally = new Map<string, number>();
   for (const v of round.votes) tally.set(v.submissionId, (tally.get(v.submissionId) ?? 0) + 1);
 
@@ -133,13 +184,17 @@ function finalizeVoting(game: Game, round: Round) {
     }
   }
 
-  // If there is a multi-way tie for the highest votes, treat as a tied vote: nobody is eliminated.
+  // If there is a multi-way tie for the highest votes, randomly eliminate one.
   if (eliminatedSubmissionIds.length > 1) {
-    eliminatedSubmissionIds = [];
-    maxVotes = 0;
+    const idx = Math.floor(Math.random() * eliminatedSubmissionIds.length);
+    const selected = eliminatedSubmissionIds[idx];
+    if (selected !== undefined) {
+      eliminatedSubmissionIds = [selected];
+      maxVotes = 0;
+    }
   }
 
-  const eliminatedPlayerIds: string[] = [];
+  const eliminatedPlayerIds: string[] = [...(round.eliminatedPlayerIds ?? [])];
   for (const submissionId of eliminatedSubmissionIds) {
     const submission = round.submissions.find((s) => s.submissionId === submissionId);
     if (!submission) continue;
@@ -147,7 +202,9 @@ function finalizeVoting(game: Game, round: Round) {
     const player = game.players.find((p) => p.playerId === submission.playerId);
     if (player && player.alive) {
       player.alive = false;
-      eliminatedPlayerIds.push(player.playerId);
+      if (!eliminatedPlayerIds.includes(player.playerId)) {
+        eliminatedPlayerIds.push(player.playerId);
+      }
     }
   }
 
@@ -166,6 +223,8 @@ function finalizeVoting(game: Game, round: Round) {
 }
 
 export function onSubmissionUpdated(game: Game, round: Round, submission?: Submission) {
+  if (!submission) return;
+
   try {
     const submitFn = (g: Game, r: Round, sub: Submission) => {
       r.submissions.push(sub);
@@ -250,7 +309,7 @@ export function startRoundForGame(game: Game, roundType: "TEXT" | "IMAGE" = "TEX
   const round: Round = {
     roundNumber: nextRoundNumber,
     roundType,
-    targetAlias: targetPlayer.alias,
+    targetAlias: targetPlayer.alias ?? "Unknown",
     status: "SUBMITTING",
     submissions: [],
     votes: [],
