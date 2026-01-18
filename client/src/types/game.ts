@@ -32,6 +32,7 @@ export interface RoundDTO {
   roundNumber: number;
   roundType: "TEXT" | "IMAGE";
   targetAlias: string;
+  roundPrompt?: string;
   status: "SUBMITTING" | "VOTING" | "COMPLETED";
   submissions: SubmissionDTO[];
   votes: VoteDTO[];
@@ -48,6 +49,7 @@ export interface GameDTO {
   hostPlayerId: string;
   players: PlayerDTO[];
   rounds: RoundDTO[];
+  winner?: "HUMANS" | "AIS";
 }
 
 export interface PublicVotingSubmission {

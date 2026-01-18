@@ -175,12 +175,12 @@ function truncateToLimit(s: string, limit: number): string {
   return cut.trim();
 }
 
-function getRoundPlan(teamMem: TeamMemory, roundNumber: number): { usedSamples: string[] } {
+function getRoundPlan(teamMem: TeamMemory, roundNumber: number): { usedSamples: string[]; fallbackVoteSubmissionId?: string } {
   const key = String(roundNumber);
   const plans: any = (teamMem as any).roundPlans ?? ((teamMem as any).roundPlans = {});
   plans[key] = plans[key] ?? { usedSamples: [] };
   plans[key].usedSamples = plans[key].usedSamples ?? [];
-  return plans[key] as { usedSamples: string[] };
+  return plans[key] as { usedSamples: string[]; fallbackVoteSubmissionId?: string };
 }
 
 export function scheduleAIForRound(
@@ -251,6 +251,38 @@ export function scheduleAIVotesForRound(
     const delay = Math.max(500, Math.floor(remaining * (0.25 + Math.random() * 0.5)));
     setTimeout(() => void handleAIVote(game, round, p, voteFn), delay);
   }
+
+  // SAFETY: last-second coordinated fallback vote if any AIs haven't voted
+  const teamId = (game.players.find((pl) => pl.isAI)?.aiData?.teamId) ?? "impostors";
+  const tm = ensureTeamMem(game, teamId);
+  const plan = getRoundPlan(tm, round.roundNumber);
+
+  // Precompute a fallback target (prefer human submissions; else any)
+  if (!plan.fallbackVoteSubmissionId) {
+    const humanSubs = round.submissions.filter((s) => {
+      const pl = game.players.find((p) => p.playerId === s.playerId);
+      return pl && !pl.isAI;
+    });
+    const pool = humanSubs.length > 0 ? humanSubs : round.submissions;
+    const pick = pool.length > 0 ? pickRandom(pool) : undefined;
+    if (pick) plan.fallbackVoteSubmissionId = pick.submissionId;
+  }
+
+  const safetyDelay = Math.max(0, (expiresAt - Date.now()) - 250);
+  setTimeout(() => {
+    if (round.status !== "VOTING") return;
+    const targetId = plan.fallbackVoteSubmissionId;
+    if (!targetId) return;
+    for (const p of game.players) {
+      if (!p.isAI || !p.alive) continue;
+      if (round.votes.find((v) => v.voterId === p.playerId)) continue;
+      const vote: Vote = { voterId: p.playerId, submissionId: targetId };
+      if (voteFn) voteFn(game, round, vote);
+      else round.votes.push(vote);
+      notifyAIsOfVote(game, round, vote);
+      ensureMem(p).notes.push(`Round ${round.roundNumber}: fallback vote=${targetId}`);
+    }
+  }, safetyDelay);
 }
 
 export function notifyAIsOfVote(game: Game, round: Round, vote: Vote) {
@@ -350,24 +382,135 @@ async function handleAIVote(
   if (!aiPlayer.alive) return; // dead AIs must not vote
   if (round.votes.find((v) => v.voterId === aiPlayer.playerId)) return;
 
-  const humanSubs = round.submissions.filter((s) => {
+  // Build full visibility for model: all current submissions with authors and current votes so far
+  const visibleSubs = round.submissions.map((s) => {
     const pl = game.players.find((p) => p.playerId === s.playerId);
-    return pl && !pl.isAI;
+    return {
+      submissionId: s.submissionId,
+      playerId: s.playerId,
+      alias: pl?.alias ?? "unknown",
+      color: pl?.colorId ?? "",
+      isAI: !!pl?.isAI,
+      content: s.content,
+    };
   });
 
-  const options = (humanSubs.length > 0 ? humanSubs : round.submissions).filter(
-    (s) => s.playerId !== aiPlayer.playerId
-  );
-  if (options.length === 0) return;
+  const votesSoFar = round.votes.map((v) => {
+    const voter = game.players.find((p) => p.playerId === v.voterId);
+    return { voterId: v.voterId, alias: voter?.alias ?? "unknown", isAI: !!voter?.isAI, submissionId: v.submissionId };
+  });
 
-  const pick = pickRandom(options);
-  const vote: Vote = { voterId: aiPlayer.playerId, submissionId: pick.submissionId };
+  const teamId = aiPlayer.aiData?.teamId ?? "impostors";
+  const teamMem = ensureTeamMem(game, teamId);
+  const plan = getRoundPlan(teamMem, round.roundNumber);
 
+  // Prefer human targets if available, excluding self
+  const humanSubs = visibleSubs.filter((s) => !s.isAI && s.playerId !== aiPlayer.playerId);
+  const optionIds = (humanSubs.length > 0 ? humanSubs : visibleSubs).map((s) => s.submissionId);
+  if (optionIds.length === 0) return;
+
+  // Try model vote first (when API available)
+  let chosen: string | null = null;
+  const haveKey = !!normalizeOptString(aiPlayer.aiData?.apiKey) || !!normalizeOptString(process.env.OPENAI_API_KEY);
+  if (haveKey) {
+    try {
+      const prompt = buildAIVotePrompt(game, round, aiPlayer, visibleSubs, votesSoFar);
+      const out = await generateVoteWithModel(aiPlayer.aiData?.apiKey, prompt, optionIds);
+      if (out && optionIds.includes(out.submission)) chosen = out.submission;
+    } catch (e) {
+      logger.warn(`AI vote model failed for ${aiPlayer.alias}: ${String(e)}`);
+    }
+  }
+
+  // Fallback: use team-coordinated target, else random from options
+  if (!chosen) {
+    if (!plan.fallbackVoteSubmissionId || !optionIds.includes(plan.fallbackVoteSubmissionId)) {
+      plan.fallbackVoteSubmissionId = pickRandom(optionIds);
+    }
+    chosen = plan.fallbackVoteSubmissionId;
+  }
+
+  const vote: Vote = { voterId: aiPlayer.playerId, submissionId: chosen };
   if (voteFn) voteFn(game, round, vote);
   else round.votes.push(vote);
-
   notifyAIsOfVote(game, round, vote);
-  ensureMem(aiPlayer).notes.push(`Round ${round.roundNumber}: voted=${pick.submissionId}`);
+  ensureMem(aiPlayer).notes.push(`Round ${round.roundNumber}: voted=${chosen}`);
+}
+
+function buildAIVotePrompt(
+  game: Game,
+  round: Round,
+  aiPlayer: Player,
+  submissions: Array<{ submissionId: string; playerId: string; alias: string; color: string; isAI: boolean; content: string }>,
+  votesSoFar: Array<{ voterId: string; alias: string; isAI: boolean; submissionId: string }>
+) {
+  const mem = ensureMem(aiPlayer);
+  const recentRounds = mem.roundsSummary
+    .filter((r) => r.roundNumber < round.roundNumber)
+    .slice(-6);
+
+  const body: Record<string, unknown> = {
+    mode: "voting",
+    roundNumber: round.roundNumber,
+    targetAlias: round.targetAlias,
+    recentRounds,
+    currentSubmissions: submissions,
+    currentVotes: votesSoFar,
+    myAlias: aiPlayer.alias,
+    myColor: aiPlayer.colorId,
+  };
+  return JSON.stringify(body);
+}
+
+type VoteModelOutput = { submission: string };
+
+async function generateVoteWithModel(
+  apiKey: string | undefined,
+  prompt: string,
+  allowedSubmissions: string[]
+): Promise<VoteModelOutput | null> {
+  const client = getOpenAIClient(apiKey);
+  if (!client) return null;
+
+  const model = process.env.OPENAI_MODEL ?? "gpt-5.2";
+
+  const instructions =
+    process.env.OPENAI_GAME_VOTE_INSTRUCTIONS ??
+    [
+      "You are an AI player impostor in a social deduction game, loosely based on 'Among Us' and 'Fibbage'. Real players can only see Colors, not aliases.",
+      "Choose exactly one submission to vote for from currentSubmissions; that player will be eliminated.",
+      "Consider author info (alias, color, isAI) and the currentVotes so far.",
+      "Return JSON only with the submission id: {\"submission\":\"<id>\"}.",
+      "The 'submission' value MUST be exactly one of currentSubmissions[].submissionId. Do NOT return text content, alias, numbers, or any other value.",
+    ].join(" ");
+
+  const schema = {
+    type: "object",
+    properties: { submission: { type: "string" } },
+    required: ["submission"],
+    additionalProperties: false,
+  } as const;
+
+  const response = await client.responses.create({
+    model,
+    instructions,
+    input: prompt,
+    reasoning: { effort: "none" },
+    text: {
+      verbosity: "low",
+      format: { type: "json_schema", name: "round_vote", strict: true, schema },
+    },
+    temperature: 0.3,
+    max_output_tokens: 40,
+    store: false,
+  } as any);
+
+  const raw = cleanSingleLine((response.output_text ?? "").trim());
+  if (!raw) return null;
+  const parsed = JSON.parse(raw) as Partial<VoteModelOutput>;
+  if (!parsed.submission) return null;
+  if (!allowedSubmissions.includes(parsed.submission)) return null;
+  return { submission: parsed.submission };
 }
 
 async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Player): Promise<string> {
@@ -500,10 +643,10 @@ async function generateWithModel(
   const instructions =
     process.env.OPENAI_GAME_INSTRUCTIONS ??
     [
-      "You are an AI player impostor in a social deduction game, loosely based on 'Among Us' and 'Fibbage'.",
+      "You are an AI player impostor in a social deduction game, loosely based on 'Among Us' and 'Fibbage'. Real players can only see Colors, not aliases.",
       "Write one short line that blends in with visibleSubmissions.",
       "Match the group's length, casing, punctuation/no-punctuation, slang, spelling style, and vibe.",
-      "Do not accuse anyone or reference voting, unless the real player group is doing that style.",
+      "You may subtly reference previous behavior using player colors if it fits the style.",
       `Target length: ${targetChars} chars (acceptable ${targetChars - lengthWindow}..${targetChars + lengthWindow}).`,
       'Return JSON only: {"submission":"...","team_note":"..."}',
       "Both must be single-line strings with no newline characters.",

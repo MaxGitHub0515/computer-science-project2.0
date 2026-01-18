@@ -34,6 +34,8 @@ const COLOR_BADGES: Record<string, string> = {
   orange: "bg-orange-500/90 text-white",
   pink: "bg-pink-500/90 text-white",
   cyan: "bg-cyan-500/90 text-black",
+  lime: "bg-lime-400/90 text-black",
+  teal: "bg-teal-400/90 text-black",
 };
 
 const COLOR_DOT: Record<string, string> = {
@@ -45,6 +47,8 @@ const COLOR_DOT: Record<string, string> = {
   orange: "bg-orange-500",
   pink: "bg-pink-500",
   cyan: "bg-cyan-500",
+  lime: "bg-lime-400",
+  teal: "bg-teal-400",
 };
 
 const GameOverPage = () => {
@@ -118,6 +122,7 @@ const GameOverPage = () => {
   const alivePlayers = lastGameSnapshot?.players.filter((p) => p.alive) || [];
   const eliminatedPlayers =
     lastGameSnapshot?.players.filter((p) => !p.alive) || [];
+  const winningTeam = lastGameSnapshot?.winner; // "HUMANS" | "AIS" | undefined
 
   // Host alias (Host-Spieler / host oyuncu)
   const hostPlayer =
@@ -136,7 +141,7 @@ const GameOverPage = () => {
       {lastGameSnapshot && (
         <AnimatePresence>
           <div className="w-full max-w-md">
-            {alivePlayers.length > 0 && (
+            {winningTeam && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -144,7 +149,23 @@ const GameOverPage = () => {
                 className="card bg-success text-success-content mb-4"
               >
                 <div className="card-body">
-                  <h2 className="card-title">Winners 🎉</h2>
+                  <h2 className="card-title">Winning Team 🎉</h2>
+                  <p className="text-lg">
+                    {winningTeam === "HUMANS" ? "Humans" : "AIs"}
+                  </p>
+                </div>
+              </motion.div>
+            )}
+
+            {alivePlayers.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                className="card bg-base-100 mb-4"
+              >
+                <div className="card-body">
+                  <h2 className="card-title">Alive players</h2>
                   <ul>
                     {alivePlayers.map((p) => (
                       <li key={p.playerId} className="flex items-center gap-3">
@@ -176,7 +197,7 @@ const GameOverPage = () => {
                 className="card bg-base-100"
               >
                 <div className="card-body">
-                  <h2 className="card-title">Eliminated</h2>
+                  <h2 className="card-title">Eliminated players</h2>
                   <ul>
                     {eliminatedPlayers.map((p) => (
                       <li

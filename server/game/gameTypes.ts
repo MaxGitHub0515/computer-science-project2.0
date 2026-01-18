@@ -12,6 +12,7 @@ export interface Round {
   roundNumber: number;
   roundType: "TEXT" | "IMAGE";
   targetAlias: string;
+  roundPrompt?: string;
   status: "SUBMITTING" | "VOTING" | "COMPLETED";
   submissions: Submission[];
   votes: Vote[];
@@ -79,6 +80,7 @@ export interface Game {
         {
           roles: Record<string, "MIMIC" | "BOLD" | "VAGUE">;
           usedSamples: string[];
+          fallbackVoteSubmissionId?: string;
         }
       >;
     }

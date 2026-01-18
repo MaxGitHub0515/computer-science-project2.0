@@ -25,16 +25,6 @@ interface GameGetResponse {
   game?: GameDTO;
 }
 
-const COLOR_AVATAR: Record<string, string> = {
-  red: "bg-red-500",
-  blue: "bg-blue-500",
-  green: "bg-green-500",
-  yellow: "bg-yellow-400",
-  purple: "bg-purple-500",
-  orange: "bg-orange-500",
-  pink: "bg-pink-500",
-  cyan: "bg-cyan-500",
-};
 
 const LobbyPage = () => {
   const { code } = useParams<{ code: string }>();
@@ -210,16 +200,12 @@ const LobbyPage = () => {
                     hidden: { opacity: 0, y: 6 },
                     visible: { opacity: 1, y: 0 },
                   }}
+                  initial="hidden"
+                  animate="visible"
+                  transition={{ duration: 0.3 }}
                 >
                   <div className="flex items-center gap-3">
-                    {/* Color */}
-                    <div
-                      className={`h-4 w-4 rounded-full ${
-                        COLOR_AVATAR[p.colorId] ?? "bg-slate-500"
-                      }`}
-                    />
-
-                    {/* Gamer name */}
+                    {/* Gamer name (no color indicator in lobby) */}
                     <span className="text-sm font-medium">
                       {p.alias}
                       {p.playerId === playerId && (

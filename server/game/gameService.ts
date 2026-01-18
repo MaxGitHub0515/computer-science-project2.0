@@ -19,6 +19,18 @@ function pickRandom<T>(arr: readonly T[]): T {
   return (arr[idx] ?? arr[0]) as T;
 }
 
+function generateRoundPrompt(targetAlias: string): string {
+  const t = targetAlias || "the target";
+  const templates = [
+    `Name one thing ${t} hates.`,
+    `Name what you like about ${t}.`,
+    `What would ${t} say on a bad day?`,
+    `What does ${t} always forget?`,
+    `Write a short sentence about ${t}.`,
+  ];
+  return pickRandom(templates);
+}
+
 function allSubmissionsIn(round: Round): boolean {
   return round.submissions.length >= round.participantIds.length;
 }
@@ -184,14 +196,9 @@ function finalizeVoting(game: Game, round: Round) {
     }
   }
 
-  // If there is a multi-way tie for the highest votes, randomly eliminate one.
+  // If there is a multi-way tie for the highest votes, do NOT eliminate anyone — skip elimination for this round.
   if (eliminatedSubmissionIds.length > 1) {
-    const idx = Math.floor(Math.random() * eliminatedSubmissionIds.length);
-    const selected = eliminatedSubmissionIds[idx];
-    if (selected !== undefined) {
-      eliminatedSubmissionIds = [selected];
-      maxVotes = 0;
-    }
+    eliminatedSubmissionIds = [];
   }
 
   const eliminatedPlayerIds: string[] = [...(round.eliminatedPlayerIds ?? [])];
@@ -266,6 +273,15 @@ function advanceAfterResults(game: Game) {
     return;
   }
 
+  // Team-based win conditions
+  if (aliveHumans === 0) {
+    game.winner = "AIS";
+    game.state = "GAME_OVER";
+    clearTimersForGame(game.code);
+    if (emitGameUpdateCallback) emitGameUpdateCallback(game);
+    return;
+  }
+
   if (aliveAIs === 0) {
     game.winner = "HUMANS";
     game.state = "GAME_OVER";
@@ -274,6 +290,8 @@ function advanceAfterResults(game: Game) {
     return;
   }
 
+  // If AIs outnumber humans at any point, they can coordinate to always outvote.
+  // End the game early and award an AI win.
   if (aliveAIs > aliveHumans) {
     game.winner = "AIS";
     game.state = "GAME_OVER";
@@ -310,6 +328,7 @@ export function startRoundForGame(game: Game, roundType: "TEXT" | "IMAGE" = "TEX
     roundNumber: nextRoundNumber,
     roundType,
     targetAlias: targetPlayer.alias ?? "Unknown",
+    roundPrompt: generateRoundPrompt(targetPlayer.alias ?? "Unknown"),
     status: "SUBMITTING",
     submissions: [],
     votes: [],

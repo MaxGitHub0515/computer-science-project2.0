@@ -358,6 +358,13 @@ export function registerSocketHandlers(io: Server) {
           return { submissionId: s.submissionId, colorId: player?.colorId ?? "unknown", content: s.content };
         });
 
+        for (let i = submissions.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = submissions[i];
+          submissions[i] = submissions[j]!;
+          submissions[j] = tmp!;
+        }
+
         const votingRound: PublicVotingRound = { code: game.code, roundNumber: round.roundNumber, submissions };
         callback({ ok: true, votingRound });
       } catch (err) {
