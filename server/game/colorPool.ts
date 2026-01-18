@@ -21,7 +21,7 @@ export function assignColor(game: Game): string {
   if (available.length > 0) {
     // Pick a random color from the available pool
     const idx = Math.floor(Math.random() * available.length);
-    return available[idx] ?? available[0];
+    return available[idx]!;
   }
 
   // Fallback if pool is exhausted: assign a unique generated color id
