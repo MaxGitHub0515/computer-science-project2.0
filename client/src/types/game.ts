@@ -49,6 +49,7 @@ export interface GameDTO {
   hostPlayerId: string;
   players: PlayerDTO[];
   rounds: RoundDTO[];
+  winner?: "HUMANS" | "AIS";
 }
 
 export interface PublicVotingSubmission {

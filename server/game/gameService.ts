@@ -278,6 +278,15 @@ function advanceAfterResults(game: Game) {
     return;
   }
 
+  // Team-based win conditions
+  if (aliveHumans === 0) {
+    game.winner = "AIS";
+    game.state = "GAME_OVER";
+    clearTimersForGame(game.code);
+    if (emitGameUpdateCallback) emitGameUpdateCallback(game);
+    return;
+  }
+
   if (aliveAIs === 0) {
     game.winner = "HUMANS";
     game.state = "GAME_OVER";
@@ -286,6 +295,8 @@ function advanceAfterResults(game: Game) {
     return;
   }
 
+  // If AIs outnumber humans at any point, they can coordinate to always outvote.
+  // End the game early and award an AI win.
   if (aliveAIs > aliveHumans) {
     game.winner = "AIS";
     game.state = "GAME_OVER";
