@@ -200,6 +200,9 @@ const LobbyPage = () => {
                     hidden: { opacity: 0, y: 6 },
                     visible: { opacity: 1, y: 0 },
                   }}
+                  initial="hidden"
+                  animate="visible"
+                  transition={{ duration: 0.3 }}
                 >
                   <div className="flex items-center gap-3">
                     {/* Gamer name (no color indicator in lobby) */}
