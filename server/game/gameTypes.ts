@@ -80,6 +80,7 @@ export interface Game {
         {
           roles: Record<string, "MIMIC" | "BOLD" | "VAGUE">;
           usedSamples: string[];
+          fallbackVoteSubmissionId?: string;
         }
       >;
     }
