@@ -1,0 +1,7 @@
+tunnel: 3e993b0f-9385-40e2-88b4-021b31e1ca03
+credentials-file: /Users/max/.cloudflared/3e993b0f-9385-40e2-88b4-021b31e1ca03.json
+
+ingress:
+  - hostname: illustrates.dev       # Replace with your domain
+    service: http://localhost:3500
+  - service: http_status:404
