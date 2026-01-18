@@ -19,7 +19,15 @@ services:
       - ./.env
     networks:
       - app-network
-
+  toxicity:
+    build: ./toxicity/ai-service
+    ports: 
+      - "8080:8080"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+  
 networks:
   app-network:
     driver: bridge
