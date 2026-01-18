@@ -43,6 +43,8 @@ const COLOR_BADGES: Record<string, string> = {
   orange: "bg-orange-500/90 text-white",
   pink: "bg-pink-500/90 text-white",
   cyan: "bg-cyan-500/90 text-black",
+  lime: "bg-lime-400/90 text-black",
+  teal: "bg-teal-400/90 text-black",
 };
 
 const COLOR_DOT: Record<string, string> = {
@@ -54,6 +56,8 @@ const COLOR_DOT: Record<string, string> = {
   orange: "bg-orange-500",
   pink: "bg-pink-500",
   cyan: "bg-cyan-500",
+  lime: "bg-lime-400",
+  teal: "bg-teal-400",
 };
 
 const COLOR_BORDER: Record<string, string> = {
@@ -150,6 +154,7 @@ const RoundPage = () => {
     (r) => r.roundNumber === roundNum
   );
   const targetAlias = currentRound?.targetAlias;
+  const roundPrompt = currentRound?.roundPrompt;
   const eliminatedPlayerIds = currentRound?.eliminatedPlayerIds || [];
   const eliminatedPlayers =
     lastGameSnapshot?.players.filter((p) =>
@@ -320,10 +325,10 @@ const RoundPage = () => {
     return `${secs}s`;
   };
 
-  // Render target player banner
+  // Render prompt banner (falls back to target alias if prompt missing)
   const renderTargetBanner = () => (
     <AnimatePresence>
-      {targetAlias && !isResultsPhase && (
+      {(roundPrompt || targetAlias) && !isResultsPhase && (
         <motion.div
           key="target-pill"
           className="flex justify-center"
@@ -332,7 +337,13 @@ const RoundPage = () => {
           exit={{ opacity: 0, y: -6 }}
         >
           <div className="px-4 py-1 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-200 text-sm">
-            Target player: <strong>{targetAlias}</strong>
+            {roundPrompt ? (
+              <span>{roundPrompt}</span>
+            ) : (
+              <span>
+                Target player: <strong>{targetAlias}</strong>
+              </span>
+            )}
           </div>
         </motion.div>
       )}
@@ -486,7 +497,7 @@ const RoundPage = () => {
               ) : (
                 <textarea
                   className="textarea textarea-bordered w-full h-32 bg-slate-900/80 border-slate-700 text-slate-100 placeholder:text-slate-500"
-                  placeholder="Write your submission..."
+                  placeholder={roundPrompt ?? "Write your submission..."}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                 />

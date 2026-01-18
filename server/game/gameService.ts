@@ -19,6 +19,18 @@ function pickRandom<T>(arr: readonly T[]): T {
   return (arr[idx] ?? arr[0]) as T;
 }
 
+function generateRoundPrompt(targetAlias: string): string {
+  const t = targetAlias || "the target";
+  const templates = [
+    `Name one thing ${t} hates.`,
+    `Name what you like about ${t}.`,
+    `What would ${t} say on a bad day?`,
+    `What does ${t} always forget?`,
+    `Write a short sentence about ${t}.`,
+  ];
+  return pickRandom(templates);
+}
+
 function allSubmissionsIn(round: Round): boolean {
   return round.submissions.length >= round.participantIds.length;
 }
@@ -310,6 +322,7 @@ export function startRoundForGame(game: Game, roundType: "TEXT" | "IMAGE" = "TEX
     roundNumber: nextRoundNumber,
     roundType,
     targetAlias: targetPlayer.alias ?? "Unknown",
+    roundPrompt: generateRoundPrompt(targetPlayer.alias ?? "Unknown"),
     status: "SUBMITTING",
     submissions: [],
     votes: [],

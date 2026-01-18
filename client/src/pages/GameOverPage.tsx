@@ -34,6 +34,8 @@ const COLOR_BADGES: Record<string, string> = {
   orange: "bg-orange-500/90 text-white",
   pink: "bg-pink-500/90 text-white",
   cyan: "bg-cyan-500/90 text-black",
+  lime: "bg-lime-400/90 text-black",
+  teal: "bg-teal-400/90 text-black",
 };
 
 const COLOR_DOT: Record<string, string> = {
@@ -45,6 +47,8 @@ const COLOR_DOT: Record<string, string> = {
   orange: "bg-orange-500",
   pink: "bg-pink-500",
   cyan: "bg-cyan-500",
+  lime: "bg-lime-400",
+  teal: "bg-teal-400",
 };
 
 const GameOverPage = () => {

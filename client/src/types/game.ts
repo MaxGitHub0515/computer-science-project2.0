@@ -32,6 +32,7 @@ export interface RoundDTO {
   roundNumber: number;
   roundType: "TEXT" | "IMAGE";
   targetAlias: string;
+  roundPrompt?: string;
   status: "SUBMITTING" | "VOTING" | "COMPLETED";
   submissions: SubmissionDTO[];
   votes: VoteDTO[];
