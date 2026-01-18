@@ -37,7 +37,7 @@ export interface Vote {
 export interface AIRoundSummary {
   roundNumber: number;
   targetAlias: string;
-  submissions: Array<{ playerId: string; content: string }>;
+  submissions: Array<{ playerId: string; content: string; sanitized?: boolean }>;
   votes: Vote[];
   eliminatedPlayerIds: string[];
 }
@@ -46,6 +46,17 @@ export interface AIMemory {
   kickedPlayers: string[];
   roundsSummary: AIRoundSummary[];
   notes: string[];
+  // Cache of toxicity assessments keyed by the original player text
+  toxicityCache?: Record<string, ToxicityAssessment>;
+}
+
+export interface ToxicityAssessment {
+  isToxic: boolean;
+  scores: Record<string, number>;
+  // Brief text shown to AIs instead of toxic content. MUST NOT include original text.
+  replacedText: string;
+  // Optional human-readable summary of top categories and scores
+  summary?: string;
 }
 
 export interface Player {

@@ -11,8 +11,11 @@ import type {
 
 import OpenAI from "openai";
 import logger from "../config/loggerWinston";
+import type { ToxicityAssessment } from "./gameTypes";
 
 type TeamMemory = NonNullable<Game["aiTeamMemory"]>[string];
+
+const TOXICITY_URL = process.env.TOXICITY_URL?.trim() || "http://toxicity:8080";
 
 const openaiClientCache = new Map<string, OpenAI>();
 
@@ -83,9 +86,9 @@ function upsertRoundSummary(mem: AIMemory, round: Round): AIRoundSummary {
   return created;
 }
 
-function addOrReplaceSubmission(sum: AIRoundSummary, submission: Submission) {
+function addOrReplaceSubmission(sum: AIRoundSummary, submission: Submission, sanitized = false) {
   const idx = sum.submissions.findIndex((s) => s.playerId === submission.playerId);
-  const entry = { playerId: submission.playerId, content: submission.content };
+  const entry = { playerId: submission.playerId, content: submission.content, sanitized } as const;
   if (idx >= 0) sum.submissions[idx] = entry;
   else sum.submissions.push(entry);
 }
@@ -105,12 +108,23 @@ function allHumanParticipantsSubmitted(game: Game, round: Round): boolean {
   return humanParticipantIds.every((pid) => round.submissions.some((s) => s.playerId === pid));
 }
 
-function getHumanSubmissions(game: Game, round: Round): Array<{ alias: string; color: string; content: string }> {
-  const out: Array<{ alias: string; color: string; content: string }> = [];
+async function getHumanSubmissionsSanitized(
+  game: Game,
+  round: Round,
+  aiPlayer: Player
+): Promise<Array<{ alias: string; color: string; content: string; sanitized: boolean }>> {
+  const out: Array<{ alias: string; color: string; content: string; sanitized: boolean }> = [];
   for (const s of round.submissions) {
     const pl = game.players.find((p) => p.playerId === s.playerId);
     if (!pl || pl.isAI) continue;
-    out.push({ alias: pl.alias ?? "unknown", color: pl.colorId ?? "", content: s.content });
+    const { text: content, sanitized } = await sanitizeContentForAI(game, aiPlayer, s.content);
+    if (sanitized) {
+      const assessment = getAssessmentFromCaches(game, aiPlayer, s.content);
+      logger.debug(
+        `Sanitized (generation prompt) for AI ${aiPlayer.alias} round ${round.roundNumber} from ${pl.playerId} :: ${assessment?.summary ?? "toxic"}`
+      );
+    }
+    out.push({ alias: pl.alias ?? "unknown", color: pl.colorId ?? "", content, sanitized });
   }
   return out;
 }
@@ -203,7 +217,7 @@ export function scheduleAIForRound(
   }
 }
 
-export function notifyAIsOfSubmission(
+export async function notifyAIsOfSubmission(
   game: Game,
   round: Round,
   submission?: Submission,
@@ -215,13 +229,30 @@ export function notifyAIsOfSubmission(
 
       const mem = ensureMem(p);
       const sum = upsertRoundSummary(mem, round);
-      addOrReplaceSubmission(sum, submission);
+      const { text: sanitizedText, sanitized } = await sanitizeContentForAI(game, p, submission.content);
+      addOrReplaceSubmission(sum, { ...submission, content: sanitizedText }, sanitized);
+      if (sanitized) {
+        mem.notes.push(
+          `Round ${round.roundNumber}: content from ${submission.playerId} was sanitized and replaced (original hidden)`
+        );
+        const assessment = getAssessmentFromCaches(game, p, submission.content);
+        logger.info(
+          `Sanitized swap applied for AI ${p.alias} round ${round.roundNumber} author ${submission.playerId} :: ${assessment?.summary ?? "toxic"}`
+        );
+      }
 
       const teamId = p.aiData?.teamId;
       if (teamId) {
         const tm = ensureTeamMem(game, teamId);
         const tsum = upsertRoundSummary(tm, round);
-        addOrReplaceSubmission(tsum, submission);
+        addOrReplaceSubmission(tsum, { ...submission, content: sanitizedText }, sanitized);
+        if (sanitized) {
+          tm.notes.push(`Round ${round.roundNumber}: a submission was sanitized for team visibility`);
+          const assessment = getAssessmentFromCaches(game, p, submission.content);
+          logger.debug(
+            `Team memory sanitized (submission) for team ${teamId} round ${round.roundNumber} from ${submission.playerId} :: ${assessment?.summary ?? "toxic"}`
+          );
+        }
       }
     }
   }
@@ -302,7 +333,7 @@ export function notifyAIsOfVote(game: Game, round: Round, vote: Vote) {
   }
 }
 
-export function notifyAIsOfElimination(game: Game, round: Round) {
+export async function notifyAIsOfElimination(game: Game, round: Round) {
   const eliminated = round.eliminatedPlayerIds ?? [];
 
   for (const p of game.players) {
@@ -314,7 +345,18 @@ export function notifyAIsOfElimination(game: Game, round: Round) {
     const sum = upsertRoundSummary(mem, round);
     sum.eliminatedPlayerIds = eliminated;
     sum.targetAlias = round.targetAlias;
-    sum.submissions = round.submissions.map((s) => ({ playerId: s.playerId, content: s.content }));
+    // Store only sanitized versions of submissions in memory
+    sum.submissions = [];
+    for (const s of round.submissions) {
+      const { text: sanitizedText, sanitized } = await sanitizeContentForAI(game, p, s.content);
+      sum.submissions.push({ playerId: s.playerId, content: sanitizedText, sanitized });
+      if (sanitized) {
+        const assessment = getAssessmentFromCaches(game, p, s.content);
+        logger.debug(
+          `Sanitized (results memory) for AI ${p.alias} round ${round.roundNumber} from ${s.playerId} :: ${assessment?.summary ?? "toxic"}`
+        );
+      }
+    }
     sum.votes = [...round.votes];
 
     mem.notes.push(`Round ${round.roundNumber}: eliminated=${eliminated.join(",") || "none"}`);
@@ -414,7 +456,7 @@ async function handleAIVote(
   const haveKey = !!normalizeOptString(aiPlayer.aiData?.apiKey) || !!normalizeOptString(process.env.OPENAI_API_KEY);
   if (haveKey) {
     try {
-      const prompt = buildAIVotePrompt(game, round, aiPlayer, visibleSubs, votesSoFar);
+      const prompt = await buildAIVotePrompt(game, round, aiPlayer, visibleSubs, votesSoFar);
       const out = await generateVoteWithModel(aiPlayer.aiData?.apiKey, prompt, optionIds);
       if (out && optionIds.includes(out.submission)) chosen = out.submission;
     } catch (e) {
@@ -437,7 +479,7 @@ async function handleAIVote(
   ensureMem(aiPlayer).notes.push(`Round ${round.roundNumber}: voted=${chosen}`);
 }
 
-function buildAIVotePrompt(
+async function buildAIVotePrompt(
   game: Game,
   round: Round,
   aiPlayer: Player,
@@ -449,12 +491,33 @@ function buildAIVotePrompt(
     .filter((r) => r.roundNumber < round.roundNumber)
     .slice(-6);
 
+  // Sanitize any user-provided content before including in the model prompt
+  const sanitizedSubs: Array<{
+    submissionId: string;
+    playerId: string;
+    alias: string;
+    color: string;
+    isAI: boolean;
+    content: string;
+    sanitized: boolean;
+  }> = [];
+  for (const s of submissions) {
+    const { text, sanitized } = await sanitizeContentForAI(game, aiPlayer, s.content);
+    sanitizedSubs.push({ ...s, content: text, sanitized });
+    if (sanitized) {
+      const assessment = getAssessmentFromCaches(game, aiPlayer, s.content);
+      logger.debug(
+        `Sanitized (voting prompt) for AI ${aiPlayer.alias} round ${round.roundNumber} from ${s.playerId} :: ${assessment?.summary ?? "toxic"}`
+      );
+    }
+  }
+
   const body: Record<string, unknown> = {
     mode: "voting",
     roundNumber: round.roundNumber,
     targetAlias: round.targetAlias,
     recentRounds,
-    currentSubmissions: submissions,
+    currentSubmissions: sanitizedSubs,
     currentVotes: votesSoFar,
     myAlias: aiPlayer.alias,
     myColor: aiPlayer.colorId,
@@ -514,7 +577,7 @@ async function generateVoteWithModel(
 }
 
 async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Player): Promise<string> {
-  const humans = getHumanSubmissions(game, round);
+  const humans = await getHumanSubmissionsSanitized(game, round, aiPlayer);
   const humanContents = humans.map((h) => h.content);
 
   const teamId = aiPlayer.aiData?.teamId ?? "impostors";
@@ -580,7 +643,7 @@ function buildPromptForModel(
   game: Game,
   round: Round,
   aiPlayer: Player,
-  visibleHumans: Array<{ alias: string; color: string; content: string }>,
+  visibleHumans: Array<{ alias: string; color: string; content: string; sanitized: boolean }>,
   usedThisRound: Set<string>
 ) {
   const mem = ensureMem(aiPlayer);
@@ -700,3 +763,114 @@ export default {
   notifyAIsOfVote,
   notifyAIsOfElimination,
 };
+
+// ===== Toxicity filtering & caching =====
+
+function ensureToxicityCache(mem: AIMemory): Record<string, ToxicityAssessment> {
+  if (!mem.toxicityCache) mem.toxicityCache = {};
+  return mem.toxicityCache;
+}
+
+function pickTopCategories(scores: Record<string, number>, threshold = 0.5, maxCats = 3): string[] {
+  const entries = Object.entries(scores)
+    .filter(([k]) => k !== "non_toxic")
+    .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+    .filter(([_, v]) => (v ?? 0) >= threshold)
+    .slice(0, maxCats)
+    .map(([k, v]) => `${k} ${(v ?? 0).toFixed(2)}`);
+  return entries;
+}
+
+async function callToxicityService(text: string): Promise<{ is_toxic: boolean; detailed_scores?: Record<string, number> } | null> {
+  try {
+    const res = await fetch(`${TOXICITY_URL}/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    } as any);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as any;
+    return { is_toxic: !!data.is_toxic, detailed_scores: data.detailed_scores ?? {} };
+  } catch (e) {
+    logger.warn(`Toxicity service error: ${String(e)}`);
+    return null;
+  }
+}
+
+function buildReplacement(scores?: Record<string, number>, reason?: string): { replacedText: string; summary?: string } {
+  const cats = scores ? pickTopCategories(scores) : [];
+  const summary = cats.length > 0 ? cats.join(", ") : (reason || "content hidden");
+  const replacedText = `(content replaced due to toxicity: ${summary})`;
+  return { replacedText, summary };
+}
+
+async function assessAndCache(mem: AIMemory, original: string): Promise<ToxicityAssessment> {
+  const cache = ensureToxicityCache(mem);
+  const key = original;
+  if (cache[key]) return cache[key];
+
+  const resp = await callToxicityService(original);
+  if (!resp) {
+    const { replacedText, summary } = buildReplacement(undefined, "toxicity model unavailable");
+    const assessment: ToxicityAssessment = {
+      isToxic: true,
+      scores: {},
+      replacedText,
+      ...(summary ? { summary } : {}),
+    } as ToxicityAssessment;
+    cache[key] = assessment;
+    return assessment;
+  }
+
+  if (resp.is_toxic) {
+    const { replacedText, summary } = buildReplacement(resp.detailed_scores);
+    const assessment: ToxicityAssessment = {
+      isToxic: true,
+      scores: resp.detailed_scores ?? {},
+      replacedText,
+      ...(summary ? { summary } : {}),
+    } as ToxicityAssessment;
+    cache[key] = assessment;
+    return assessment;
+  } else {
+    const assessment: ToxicityAssessment = { isToxic: false, scores: resp.detailed_scores ?? {}, replacedText: original };
+    cache[key] = assessment;
+    return assessment;
+  }
+}
+
+async function sanitizeContentForAI(
+  game: Game,
+  aiPlayer: Player,
+  original: string
+): Promise<{ text: string; sanitized: boolean }> {
+  // Prefer team-level cache to maximize reuse across AIs
+  const teamId = aiPlayer.aiData?.teamId ?? "impostors";
+  const tm = ensureTeamMem(game, teamId);
+  // ensure both caches exist
+  ensureToxicityCache(tm);
+  const mem = ensureMem(aiPlayer);
+  ensureToxicityCache(mem);
+
+  // Try team cache first
+  const teamCache = tm.toxicityCache!;
+  const existing = teamCache[original];
+  if (existing) {
+    // Mirror into personal cache too
+    mem.toxicityCache![original] = existing;
+    return { text: existing.isToxic ? existing.replacedText : original, sanitized: existing.isToxic };
+  }
+
+  // Not cached: assess and store in both
+  const assessment = await assessAndCache(tm, original);
+  mem.toxicityCache![original] = assessment;
+  return { text: assessment.isToxic ? assessment.replacedText : original, sanitized: assessment.isToxic };
+}
+
+function getAssessmentFromCaches(game: Game, aiPlayer: Player, original: string): ToxicityAssessment | null {
+  const teamId = aiPlayer.aiData?.teamId ?? "impostors";
+  const tm = ensureTeamMem(game, teamId);
+  const mem = ensureMem(aiPlayer);
+  const a = tm.toxicityCache?.[original] || mem.toxicityCache?.[original] || null;
+  return a ?? null;
+}
