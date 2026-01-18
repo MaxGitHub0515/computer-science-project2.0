@@ -196,14 +196,9 @@ function finalizeVoting(game: Game, round: Round) {
     }
   }
 
-  // If there is a multi-way tie for the highest votes, randomly eliminate one.
+  // If there is a multi-way tie for the highest votes, do NOT eliminate anyone — skip elimination for this round.
   if (eliminatedSubmissionIds.length > 1) {
-    const idx = Math.floor(Math.random() * eliminatedSubmissionIds.length);
-    const selected = eliminatedSubmissionIds[idx];
-    if (selected !== undefined) {
-      eliminatedSubmissionIds = [selected];
-      maxVotes = 0;
-    }
+    eliminatedSubmissionIds = [];
   }
 
   const eliminatedPlayerIds: string[] = [...(round.eliminatedPlayerIds ?? [])];

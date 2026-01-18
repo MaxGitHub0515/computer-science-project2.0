@@ -61,7 +61,7 @@ test("onVotesUpdated eliminates the player with most votes", () => {
   expect(game.players.find((p) => p.playerId === round.eliminatedPlayerIds?.[0])?.alive).toBe(false);
 });
 
-test("onVotesUpdated tie-breaker eliminates one player randomly", () => {
+test("onVotesUpdated tie results in no elimination", () => {
   const game = makeGameWithPlayers(3);
 
   const round = {
@@ -83,10 +83,6 @@ test("onVotesUpdated tie-breaker eliminates one player randomly", () => {
     eliminatedPlayerIds: [] as string[],
   };
 
-  // Mock Math.random to make the choice deterministic
-  const originalRand = Math.random;
-  Math.random = () => 0.6; // pick the second-ish entry depending on implementation
-
   onVotesUpdated(game, round);
 
   // Ensure immediate timers (none) are processed, but avoid advancing the auto-advance 3s timeout
@@ -94,10 +90,9 @@ test("onVotesUpdated tie-breaker eliminates one player randomly", () => {
 
   expect(round.status).toBe("COMPLETED");
   expect(game.state).toBe("ROUND_RESULTS");
-  expect(round.eliminatedPlayerIds?.length).toBe(1);
-
-  // Restore
-  Math.random = originalRand;
+  // On a tie, no one should be eliminated
+  expect(round.eliminatedPlayerIds?.length).toBe(0);
+  expect(game.players.every((p) => p.alive)).toBe(true);
 });
 
 test("finalizeVoting awards participation points, fast bonuses, and penalties for no submission", () => {
