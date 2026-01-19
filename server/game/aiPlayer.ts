@@ -386,7 +386,19 @@ async function handleAISubmit(
   if (round.submissions.find((s) => s.playerId === aiPlayer.playerId)) return;
   if (!allHumanParticipantsSubmitted(game, round)) return;
 
-  const content = await buildAISubmissionContent(game, round, aiPlayer);
+  const { content, prompt } = await buildAISubmissionContent(game, round, aiPlayer);
+
+  // Demo logging: AI submission details
+  const teamId = aiPlayer.aiData?.teamId;
+  if (teamId) {
+    const teamMem = ensureTeamMem(game, teamId);
+    logger.info(`🤖 AI ${aiPlayer.alias} - Team Memory Notes: ${JSON.stringify((teamMem.notes ?? []).slice(-5), null, 2)}`);
+  }
+  logger.info(`🤖 AI ${aiPlayer.alias} (Round ${round.roundNumber}) - Submission: "${content}"`);
+  if (prompt) {
+    logger.info(`🤖 AI ${aiPlayer.alias} - Prompt used: ${prompt}`);
+  }
+  logger.info(`🤖 AI ${aiPlayer.alias} - Human Submissions Seen: ${JSON.stringify(await getHumanSubmissionsSanitized(game, round, aiPlayer), null, 2)}`);
 
   const submission: Submission = {
     submissionId: makeSubmissionId(game.code, aiPlayer.playerId, round.roundNumber),
@@ -404,7 +416,6 @@ async function handleAISubmit(
   addOrReplaceSubmission(sum, submission);
   mem.notes.push(`Round ${round.roundNumber}: submitted`);
 
-  const teamId = aiPlayer.aiData?.teamId;
   if (teamId) {
     const tm = ensureTeamMem(game, teamId);
     const plan = getRoundPlan(tm, round.roundNumber);
@@ -446,6 +457,10 @@ async function handleAIVote(
   const teamMem = ensureTeamMem(game, teamId);
   const plan = getRoundPlan(teamMem, round.roundNumber);
 
+  if (teamId !== "impostors" || teamId === "impostors") { // always log for demo
+    logger.info(`🗳️ Team ${teamId} Memory Notes: ${JSON.stringify((teamMem.notes ?? []).slice(-10), null, 2)}`);
+  }
+
   // Prefer human targets if available, excluding self
   const humanSubs = visibleSubs.filter((s) => !s.isAI && s.playerId !== aiPlayer.playerId);
   const optionIds = (humanSubs.length > 0 ? humanSubs : visibleSubs).map((s) => s.submissionId);
@@ -459,6 +474,12 @@ async function handleAIVote(
       const prompt = await buildAIVotePrompt(game, round, aiPlayer, visibleSubs, votesSoFar);
       const out = await generateVoteWithModel(aiPlayer.aiData?.apiKey, prompt, optionIds);
       if (out && optionIds.includes(out.submission)) chosen = out.submission;
+
+      // Demo logging: AI voting details
+      logger.info(`🗳️ AI ${aiPlayer.alias} (Round ${round.roundNumber}) - Voting Prompt: ${prompt}`);
+      logger.info(`🗳️ AI ${aiPlayer.alias} - Visible Submissions: ${JSON.stringify(visibleSubs, null, 2)}`);
+      logger.info(`🗳️ AI ${aiPlayer.alias} - Votes So Far: ${JSON.stringify(votesSoFar, null, 2)}`);
+      logger.info(`🗳️ AI ${aiPlayer.alias} - Chose to vote for submission: ${chosen}`);
     } catch (e) {
       logger.warn(`AI vote model failed for ${aiPlayer.alias}: ${String(e)}`);
     }
@@ -470,6 +491,7 @@ async function handleAIVote(
       plan.fallbackVoteSubmissionId = pickRandom(optionIds);
     }
     chosen = plan.fallbackVoteSubmissionId;
+    logger.info(`🗳️ AI ${aiPlayer.alias} (Round ${round.roundNumber}) - Fallback Vote: ${chosen}`);
   }
 
   const vote: Vote = { voterId: aiPlayer.playerId, submissionId: chosen };
@@ -576,7 +598,7 @@ async function generateVoteWithModel(
   return { submission: parsed.submission };
 }
 
-async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Player): Promise<string> {
+async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Player): Promise<{ content: string; prompt?: string }> {
   const humans = await getHumanSubmissionsSanitized(game, round, aiPlayer);
   const humanContents = humans.map((h) => h.content);
 
@@ -607,7 +629,7 @@ async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Play
       if (generated.team_note) storeTeamNote(game, aiPlayer, round, generated.team_note);
 
       if (!used.has(cleanSingleLine(fitted)) && fitted.length >= minLen) {
-        return fitted;
+        return { content: fitted, prompt };
       }
     }
   }
@@ -615,10 +637,10 @@ async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Play
   if (humanContents.length > 0) {
     const pool = humanContents.filter((c) => !used.has(cleanSingleLine(c)));
     const pick = pickRandom(pool.length > 0 ? pool : humanContents);
-    return truncateToLimit(pick, 140);
+    return { content: truncateToLimit(pick, 140) };
   }
 
-  return "idk";
+  return { content: "idk" };
 }
 
 function fitToGroupEnvelope(s: string, prof: ReturnType<typeof styleProfile>): string {
@@ -666,6 +688,8 @@ function buildPromptForModel(
 
   const teamId = aiPlayer.aiData?.teamId ?? "impostors";
   const teamMem = ensureTeamMem(game, teamId);
+
+  logger.info(`🤖 Team ${teamId} Memory Notes: ${JSON.stringify((teamMem.notes ?? []).slice(-10), null, 2)}`);
 
   const body: Record<string, unknown> = {
     mode: "submission",
