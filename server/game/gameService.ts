@@ -54,10 +54,10 @@ function allHumanVotesIn(game: Game, round: Round): boolean {
 
 const DEFAULT_SUBMIT_DURATION_MS = process.env.SUBMIT_DURATION_MS
   ? parseInt(process.env.SUBMIT_DURATION_MS, 10)
-  : 60_000;
+  : 240_000;
 const DEFAULT_VOTE_DURATION_MS = process.env.VOTE_DURATION_MS
   ? parseInt(process.env.VOTE_DURATION_MS, 10)
-  : 60_000;
+  : 240_000;
 
 type GameTimers = { submit?: NodeJS.Timeout; vote?: NodeJS.Timeout; results?: NodeJS.Timeout };
 const timers = new Map<string, GameTimers>();

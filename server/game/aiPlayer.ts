@@ -259,8 +259,9 @@ function logAIVoteDecision(params: {
   votesSoFar: Array<{ voterId: string; alias: string; isAI: boolean; submissionId: string }>;
   chosenId: string;
   method: "model" | "team-fallback" | "safety-fallback";
+  teamNotesRecent?: string[];
 }) {
-  const { roundNumber, aiAlias, aiColor, teamId, options, votesSoFar, chosenId, method } = params;
+  const { roundNumber, aiAlias, aiColor, teamId, options, votesSoFar, chosenId, method, teamNotesRecent } = params;
 
   const optLines = options.slice(0, 8).map((o) => {
     const who = o.alias || o.color || "unknown";
@@ -286,6 +287,9 @@ function logAIVoteDecision(params: {
   } else {
     lines.push(`- Options: none`);
   }
+  const notesLines = (teamNotesRecent ?? []).slice(-5);
+  lines.push(`- Team notes (recent):${notesLines.length ? "" : " none"}`);
+  if (notesLines.length) lines.push(formatList(notesLines, "  • "));
   lines.push(`- Votes so far: ${votesCount} (humans ${humanVotes}, AIs ${aiVotes})`);
   lines.push(`Decision:`);
   lines.push(`- Chosen: id=${chosenId} by ${chosenWho}`);
@@ -665,7 +669,16 @@ async function handleAIVote(
 
   // Prefer human targets if available, excluding self
   const humanSubs = visibleSubs.filter((s) => !s.isAI && s.playerId !== aiPlayer.playerId);
-  const optionIds = (humanSubs.length > 0 ? humanSubs : visibleSubs).map((s) => s.submissionId);
+  const optionPool = humanSubs.length > 0 ? humanSubs : visibleSubs;
+  const optionIds = optionPool.map((s) => s.submissionId);
+  const aliasToSubmissions = new Map<string, Array<{ submissionId: string; isAI: boolean }>>();
+  for (const s of optionPool) {
+    const key = (s.alias || "").toString();
+    const list = aliasToSubmissions.get(key) ?? [];
+    list.push({ submissionId: s.submissionId, isAI: s.isAI });
+    aliasToSubmissions.set(key, list);
+  }
+  const allowedAliases = Array.from(aliasToSubmissions.keys());
   if (optionIds.length === 0) return;
 
   // Try model vote first (when API available)
@@ -675,8 +688,15 @@ async function handleAIVote(
   if (haveKey) {
     try {
       const prompt = await buildAIVotePrompt(game, round, aiPlayer, visibleSubs, votesSoFar);
-      const out = await generateVoteWithModel(aiPlayer.aiData?.apiKey, prompt, optionIds);
-      if (out && optionIds.includes(out.submission)) { chosen = out.submission; method = "model"; }
+      const out = await generateVoteWithModel(aiPlayer.aiData?.apiKey, prompt, allowedAliases);
+      if (out?.author_alias) {
+        const matches = aliasToSubmissions.get(out.author_alias) ?? [];
+        const humanFirst = matches.find((m) => !m.isAI) ?? matches[0];
+        if (humanFirst && optionIds.includes(humanFirst.submissionId)) {
+          chosen = humanFirst.submissionId; method = "model";
+        }
+      }
+      if (out?.team_note) storeTeamNote(game, aiPlayer, round, out.team_note);
     } catch (e) {
       logger.warn(`AI vote model failed for ${aiPlayer.alias}: ${String(e)}`);
     }
@@ -702,15 +722,19 @@ async function handleAIVote(
       const { text, sanitized } = await sanitizeContentForAI(game, aiPlayer, s.content);
       sanitizedOptions.push({ ...s, content: text, sanitized });
     }
+    const teamIdLog = aiPlayer.aiData?.teamId;
+    const tmLog = teamIdLog ? ensureTeamMem(game, teamIdLog) : undefined;
+    const recentNotes = tmLog?.notes ? tmLog.notes.slice(-5) : [];
     logAIVoteDecision({
       roundNumber: round.roundNumber,
       aiAlias: aiPlayer.alias ?? aiPlayer.playerId,
       aiColor: aiPlayer.colorId,
-      teamId: aiPlayer.aiData?.teamId,
+      teamId: teamIdLog,
       options: sanitizedOptions,
       votesSoFar,
       chosenId: chosen,
       method,
+      teamNotesRecent: recentNotes,
     });
   } catch (_) {
     // best-effort logging
@@ -750,6 +774,9 @@ async function buildAIVotePrompt(
     }
   }
 
+  const teamId = aiPlayer.aiData?.teamId ?? "impostors";
+  const teamMem = ensureTeamMem(game, teamId);
+
   const body: Record<string, unknown> = {
     mode: "voting",
     roundNumber: round.roundNumber,
@@ -759,16 +786,20 @@ async function buildAIVotePrompt(
     currentVotes: votesSoFar,
     myAlias: aiPlayer.alias,
     myColor: aiPlayer.colorId,
+    teamMemory: {
+      notes: (teamMem.notes ?? []).slice(-20),
+    },
+    instruction: "Pick author_alias exactly from currentSubmissions[].alias; return author_alias + team_note only.",
   };
   return JSON.stringify(body);
 }
 
-type VoteModelOutput = { submission: string };
+type VoteModelOutput = { author_alias: string; team_note: string };
 
 async function generateVoteWithModel(
   apiKey: string | undefined,
   prompt: string,
-  allowedSubmissions: string[]
+  allowedAliases: string[]
 ): Promise<VoteModelOutput | null> {
   const client = getOpenAIClient(apiKey);
   if (!client) return null;
@@ -780,15 +811,19 @@ async function generateVoteWithModel(
     [
       "You are an AI player impostor in a social deduction game, loosely based on 'Among Us' and 'Fibbage'. Real players can only see Colors, not aliases.",
       "Choose exactly one submission to vote for from currentSubmissions; that player will be eliminated.",
-      "Consider author info (alias, color, isAI) and the currentVotes so far.",
-      "Return JSON only with the submission id: {\"submission\":\"<id>\"}.",
-      "The 'submission' value MUST be exactly one of currentSubmissions[].submissionId. Do NOT return text content, alias, numbers, or any other value.",
+      "Consider author info (alias, color, isAI), teamMemory.notes, and the currentVotes so far.",
+      'Return JSON only: {"author_alias":"<alias>","team_note":"..."}.',
+      "Choose the exact alias string from currentSubmissions[].alias.",
+      "Include a brief team_note to guide teammates.",
     ].join(" ");
 
   const schema = {
     type: "object",
-    properties: { submission: { type: "string" } },
-    required: ["submission"],
+    properties: {
+      author_alias: { type: "string", enum: allowedAliases.length ? allowedAliases : undefined },
+      team_note: { type: "string" },
+    },
+    required: ["author_alias", "team_note"],
     additionalProperties: false,
   } as const;
 
@@ -810,9 +845,10 @@ async function generateVoteWithModel(
   if (!raw) return null;
   const parsed = parseJSONFromText<Partial<VoteModelOutput>>(raw);
   if (!parsed) return null;
-  if (!parsed.submission) return null;
-  if (!allowedSubmissions.includes(parsed.submission)) return null;
-  return { submission: parsed.submission };
+  if (!parsed.author_alias) return null;
+  if (allowedAliases.length && !allowedAliases.includes(parsed.author_alias)) return null;
+  if (!parsed.team_note) return null;
+  return { author_alias: parsed.author_alias, team_note: parsed.team_note };
 }
 
 async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Player): Promise<{ text: string; usedModel: boolean }> {
