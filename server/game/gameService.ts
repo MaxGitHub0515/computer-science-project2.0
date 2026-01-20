@@ -32,19 +32,21 @@ function generateRoundPrompt(targetAlias: string): string {
 }
 
 function allSubmissionsIn(round: Round): boolean {
-  return round.submissions.length >= round.participantIds.length;
+  const uniqueSubmitters = new Set(round.submissions.map((s) => s.playerId));
+  return uniqueSubmitters.size >= round.participantIds.length;
 }
 
 function allVotesIn(round: Round): boolean {
-  return round.votes.length >= round.participantIds.length;
+  const uniqueVoters = new Set(round.votes.map((v) => v.voterId));
+  return uniqueVoters.size >= round.participantIds.length;
 }
 
 const DEFAULT_SUBMIT_DURATION_MS = process.env.SUBMIT_DURATION_MS
   ? parseInt(process.env.SUBMIT_DURATION_MS, 10)
-  : 30_000;
+  : 60_000;
 const DEFAULT_VOTE_DURATION_MS = process.env.VOTE_DURATION_MS
   ? parseInt(process.env.VOTE_DURATION_MS, 10)
-  : 30_000;
+  : 60_000;
 
 type GameTimers = { submit?: NodeJS.Timeout; vote?: NodeJS.Timeout; results?: NodeJS.Timeout };
 const timers = new Map<string, GameTimers>();
@@ -103,6 +105,10 @@ function enterVotingPhase(game: Game, round: Round) {
 
   try {
     const voteFn = (g: Game, r: Round, vote: Vote) => {
+      if (r.status !== "VOTING") return;
+      if (!r.participantIds.includes(vote.voterId)) return;
+      if (r.votes.some((v) => v.voterId === vote.voterId)) return; // enforce 1 vote per voter
+      if (!r.submissions.some((s) => s.submissionId === vote.submissionId)) return;
       r.votes.push(vote);
       onVotesUpdated(g, r);
       if (emitGameUpdateCallback) emitGameUpdateCallback(g);
@@ -234,6 +240,9 @@ export function onSubmissionUpdated(game: Game, round: Round, submission?: Submi
 
   try {
     const submitFn = (g: Game, r: Round, sub: Submission) => {
+      if (r.status !== "SUBMITTING") return;
+      if (!r.participantIds.includes(sub.playerId)) return;
+      if (r.submissions.some((s) => s.playerId === sub.playerId)) return; // enforce 1 submission per player
       r.submissions.push(sub);
       onSubmissionUpdated(g, r, sub);
       if (emitGameUpdateCallback) emitGameUpdateCallback(g);
@@ -344,6 +353,9 @@ export function startRoundForGame(game: Game, roundType: "TEXT" | "IMAGE" = "TEX
 
   try {
     const submitFn = (g: Game, r: Round, sub: Submission) => {
+      if (r.status !== "SUBMITTING") return;
+      if (!r.participantIds.includes(sub.playerId)) return;
+      if (r.submissions.some((s) => s.playerId === sub.playerId)) return; // enforce 1 submission per player
       r.submissions.push(sub);
       onSubmissionUpdated(g, r, sub);
       if (emitGameUpdateCallback) emitGameUpdateCallback(g);
