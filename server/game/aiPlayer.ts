@@ -189,6 +189,111 @@ function truncateToLimit(s: string, limit: number): string {
   return cut.trim();
 }
 
+function formatList(items: string[], bullet = "• "): string {
+  return items.map((i) => `${bullet}${i}`).join("\n");
+}
+
+function logAISubmissionDecision(params: {
+  roundNumber: number;
+  targetAlias: string;
+  aiAlias: string;
+  aiColor?: string | undefined;
+  teamId?: string | undefined;
+  visibleHumans: Array<{ alias: string; color: string; content: string; sanitized: boolean }>;
+  teamNotesRecent: string[];
+  usedSamplesCount: number;
+  output: string;
+  usedModel: boolean;
+}) {
+  const {
+    roundNumber,
+    targetAlias,
+    aiAlias,
+    aiColor,
+    teamId,
+    visibleHumans,
+    teamNotesRecent,
+    usedSamplesCount,
+    output,
+    usedModel,
+  } = params;
+
+  const humanLines = visibleHumans.slice(0, 6).map((h) => {
+    const preview = truncateToLimit(h.content, 80);
+    const from = h.alias || h.color || "unknown";
+    return `${from}: "${preview}"${h.sanitized ? " (sanitized)" : ""}`;
+  });
+
+  const notesLines = teamNotesRecent.slice(-5);
+
+  const lines: string[] = [];
+  lines.push(
+    `[AI Submission] Round ${roundNumber} — ${aiAlias}${aiColor ? ` (${aiColor})` : ""}${
+      teamId ? ` | Team: ${teamId}` : ""
+    }`
+  );
+  lines.push(`Inputs:`);
+  lines.push(`- Target: ${targetAlias || "unknown"}`);
+  if (humanLines.length > 0) {
+    lines.push(`- Visible human inputs (sanitized):`);
+    lines.push(formatList(humanLines, "  • "));
+  } else {
+    lines.push(`- Visible human inputs: none`);
+  }
+  lines.push(`- Team notes (recent):${notesLines.length ? "" : " none"}`);
+  if (notesLines.length) lines.push(formatList(notesLines, "  • "));
+  lines.push(`- Used samples this round: ${usedSamplesCount}`);
+  lines.push(`Decision:`);
+  lines.push(`- Output: "${truncateToLimit(output, 120)}"`);
+  lines.push(`- Method: ${usedModel ? "model-guided" : "copy/fit-from-group"}`);
+
+  logger.info(lines.join("\n"));
+}
+
+function logAIVoteDecision(params: {
+  roundNumber: number;
+  aiAlias: string;
+  aiColor?: string | undefined;
+  teamId?: string | undefined;
+  options: Array<{ submissionId: string; alias: string; color: string; isAI: boolean; content: string; sanitized?: boolean }>;
+  votesSoFar: Array<{ voterId: string; alias: string; isAI: boolean; submissionId: string }>;
+  chosenId: string;
+  method: "model" | "team-fallback" | "safety-fallback";
+}) {
+  const { roundNumber, aiAlias, aiColor, teamId, options, votesSoFar, chosenId, method } = params;
+
+  const optLines = options.slice(0, 8).map((o) => {
+    const who = o.alias || o.color || "unknown";
+    const preview = truncateToLimit(o.content, 80);
+    const san = o.sanitized ? " (sanitized)" : "";
+    return `${who}${o.isAI ? " [AI]" : ""}: "${preview}"${san} → id=${o.submissionId}`;
+  });
+
+  const chosen = options.find((o) => o.submissionId === chosenId);
+  const chosenWho = chosen ? chosen.alias || chosen.color || "unknown" : "unknown";
+  const votesCount = votesSoFar.length;
+  const humanVotes = votesSoFar.filter((v) => !v.isAI).length;
+  const aiVotes = votesCount - humanVotes;
+
+  const lines: string[] = [];
+  lines.push(
+    `[AI Vote] Round ${roundNumber} — ${aiAlias}${aiColor ? ` (${aiColor})` : ""}${teamId ? ` | Team: ${teamId}` : ""}`
+  );
+  lines.push(`Inputs:`);
+  if (optLines.length > 0) {
+    lines.push(`- Options (sanitized):`);
+    lines.push(formatList(optLines, "  • "));
+  } else {
+    lines.push(`- Options: none`);
+  }
+  lines.push(`- Votes so far: ${votesCount} (humans ${humanVotes}, AIs ${aiVotes})`);
+  lines.push(`Decision:`);
+  lines.push(`- Chosen: id=${chosenId} by ${chosenWho}`);
+  lines.push(`- Method: ${method}`);
+
+  logger.info(lines.join("\n"));
+}
+
 // Robustly extract and parse a JSON object from possibly messy model output
 function extractFirstJsonObject(text: string): string | null {
   if (!text) return null;
@@ -365,6 +470,12 @@ export function scheduleAIVotesForRound(
     if (round.status !== "VOTING") return;
     const targetId = plan.fallbackVoteSubmissionId;
     if (!targetId) return;
+    const targetSub = round.submissions.find((s) => s.submissionId === targetId);
+    const targetAuthor = targetSub
+      ? (game.players.find((p) => p.playerId === targetSub.playerId)?.alias ||
+         game.players.find((p) => p.playerId === targetSub.playerId)?.colorId ||
+         "unknown")
+      : "unknown";
     for (const p of game.players) {
       if (!p.isAI || !p.alive) continue;
       if (round.votes.find((v) => v.voterId === p.playerId)) continue;
@@ -373,6 +484,13 @@ export function scheduleAIVotesForRound(
       else round.votes.push(vote);
       notifyAIsOfVote(game, round, vote);
       ensureMem(p).notes.push(`Round ${round.roundNumber}: fallback vote=${targetId}`);
+      try {
+        logger.info(
+          `[AI Vote] Round ${round.roundNumber} — ${p.alias ?? p.playerId} (${p.colorId ?? ""}) | safety-fallback → id=${targetId} by ${targetAuthor}`
+        );
+      } catch (_) {
+        // ignore
+      }
     }
   }, safetyDelay);
 }
@@ -462,7 +580,8 @@ async function handleAISubmit(
   if (round.submissions.find((s) => s.playerId === aiPlayer.playerId)) return;
   if (!allHumanParticipantsSubmitted(game, round)) return;
 
-  const content = await buildAISubmissionContent(game, round, aiPlayer);
+  const submissionResult = await buildAISubmissionContent(game, round, aiPlayer);
+  const content = submissionResult.text;
 
   const submission: Submission = {
     submissionId: makeSubmissionId(game.code, aiPlayer.playerId, round.roundNumber),
@@ -487,6 +606,28 @@ async function handleAISubmit(
     plan.usedSamples.push(content);
     tm.notes = tm.notes ?? [];
     tm.notes.push(`Round ${round.roundNumber}: ${aiPlayer.alias}: ${content}`);
+  }
+
+  try {
+    const humans = await getHumanSubmissionsSanitized(game, round, aiPlayer);
+    const teamId = aiPlayer.aiData?.teamId;
+    const tm = teamId ? ensureTeamMem(game, teamId) : undefined;
+    const usedSamplesCount = teamId ? (getRoundPlan(tm!, round.roundNumber).usedSamples?.length ?? 0) : 0;
+    const recentNotes = tm?.notes ? tm.notes.slice(-5) : [];
+    logAISubmissionDecision({
+      roundNumber: round.roundNumber,
+      targetAlias: round.targetAlias,
+      aiAlias: aiPlayer.alias ?? aiPlayer.playerId,
+      aiColor: aiPlayer.colorId,
+      teamId,
+      visibleHumans: humans,
+      teamNotesRecent: recentNotes,
+      usedSamplesCount,
+      output: content,
+      usedModel: !!submissionResult.usedModel,
+    });
+  } catch (_) {
+    // best-effort logging; ignore failures
   }
 }
 
@@ -529,12 +670,13 @@ async function handleAIVote(
 
   // Try model vote first (when API available)
   let chosen: string | null = null;
+  let method: "model" | "team-fallback" = "team-fallback";
   const haveKey = !!normalizeOptString(aiPlayer.aiData?.apiKey) || !!normalizeOptString(process.env.OPENAI_API_KEY);
   if (haveKey) {
     try {
       const prompt = await buildAIVotePrompt(game, round, aiPlayer, visibleSubs, votesSoFar);
       const out = await generateVoteWithModel(aiPlayer.aiData?.apiKey, prompt, optionIds);
-      if (out && optionIds.includes(out.submission)) chosen = out.submission;
+      if (out && optionIds.includes(out.submission)) { chosen = out.submission; method = "model"; }
     } catch (e) {
       logger.warn(`AI vote model failed for ${aiPlayer.alias}: ${String(e)}`);
     }
@@ -553,6 +695,26 @@ async function handleAIVote(
   else round.votes.push(vote);
   notifyAIsOfVote(game, round, vote);
   ensureMem(aiPlayer).notes.push(`Round ${round.roundNumber}: voted=${chosen}`);
+
+  try {
+    const sanitizedOptions: Array<{ submissionId: string; alias: string; color: string; isAI: boolean; content: string; sanitized?: boolean }> = [];
+    for (const s of visibleSubs) {
+      const { text, sanitized } = await sanitizeContentForAI(game, aiPlayer, s.content);
+      sanitizedOptions.push({ ...s, content: text, sanitized });
+    }
+    logAIVoteDecision({
+      roundNumber: round.roundNumber,
+      aiAlias: aiPlayer.alias ?? aiPlayer.playerId,
+      aiColor: aiPlayer.colorId,
+      teamId: aiPlayer.aiData?.teamId,
+      options: sanitizedOptions,
+      votesSoFar,
+      chosenId: chosen,
+      method,
+    });
+  } catch (_) {
+    // best-effort logging
+  }
 }
 
 async function buildAIVotePrompt(
@@ -653,7 +815,7 @@ async function generateVoteWithModel(
   return { submission: parsed.submission };
 }
 
-async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Player): Promise<string> {
+async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Player): Promise<{ text: string; usedModel: boolean }> {
   const humans = await getHumanSubmissionsSanitized(game, round, aiPlayer);
   const humanContents = humans.map((h) => h.content);
 
@@ -684,7 +846,7 @@ async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Play
       if (generated.team_note) storeTeamNote(game, aiPlayer, round, generated.team_note);
 
       if (!used.has(cleanSingleLine(fitted)) && fitted.length >= minLen) {
-        return fitted;
+        return { text: fitted, usedModel: true };
       }
     }
   }
@@ -692,10 +854,10 @@ async function buildAISubmissionContent(game: Game, round: Round, aiPlayer: Play
   if (humanContents.length > 0) {
     const pool = humanContents.filter((c) => !used.has(cleanSingleLine(c)));
     const pick = pickRandom(pool.length > 0 ? pool : humanContents);
-    return truncateToLimit(pick, 140);
+    return { text: truncateToLimit(pick, 140), usedModel: false };
   }
 
-  return "idk";
+  return { text: "idk", usedModel: false };
 }
 
 function fitToGroupEnvelope(s: string, prof: ReturnType<typeof styleProfile>): string {
