@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import {
   scheduleAIForRound,
   scheduleAIVotesForRound,
+  fastTrackAIVotesForRound,
   notifyAIsOfSubmission,
   notifyAIsOfElimination,
 } from "./aiPlayer";
@@ -39,6 +40,16 @@ function allSubmissionsIn(round: Round): boolean {
 function allVotesIn(round: Round): boolean {
   const uniqueVoters = new Set(round.votes.map((v) => v.voterId));
   return uniqueVoters.size >= round.participantIds.length;
+}
+
+function allHumanVotesIn(game: Game, round: Round): boolean {
+  const humanIds = (round.participantIds ?? []).filter((pid) => {
+    const pl = game.players.find((p) => p.playerId === pid);
+    return !!pl && !pl.isAI;
+  });
+  if (humanIds.length === 0) return false;
+  const voted = new Set(round.votes.map((v) => v.voterId));
+  return humanIds.every((pid) => voted.has(pid));
 }
 
 const DEFAULT_SUBMIT_DURATION_MS = process.env.SUBMIT_DURATION_MS
@@ -257,6 +268,22 @@ export function onSubmissionUpdated(game: Game, round: Round, submission?: Submi
 }
 
 export function onVotesUpdated(game: Game, round: Round) {
+  // If all humans have voted but some AIs haven't, fast-track AI votes now
+  if (!allVotesIn(round) && allHumanVotesIn(game, round)) {
+    const voteFn = (g: Game, r: Round, vote: Vote) => {
+      if (r.status !== "VOTING") return;
+      if (!r.participantIds.includes(vote.voterId)) return;
+      if (r.votes.some((v) => v.voterId === vote.voterId)) return; // enforce 1 vote per voter
+      if (!r.submissions.some((s) => s.submissionId === vote.submissionId)) return;
+      r.votes.push(vote);
+      onVotesUpdated(g, r);
+      if (emitGameUpdateCallback) emitGameUpdateCallback(g);
+    };
+    try {
+      fastTrackAIVotesForRound(game, round, voteFn);
+    } catch {}
+  }
+
   if (!allVotesIn(round)) return;
 
   const t = timers.get(game.code);

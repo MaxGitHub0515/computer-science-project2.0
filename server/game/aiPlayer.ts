@@ -189,6 +189,67 @@ function truncateToLimit(s: string, limit: number): string {
   return cut.trim();
 }
 
+// Robustly extract and parse a JSON object from possibly messy model output
+function extractFirstJsonObject(text: string): string | null {
+  if (!text) return null;
+  // Prefer fenced code blocks if present
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fence && fence[1]) return fence[1].trim();
+
+  // If the whole text looks like JSON, try it as-is
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+
+  // Scan for the first balanced {...} region, ignoring braces inside strings
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let start = -1;
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i] ?? "";
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        return trimmed.slice(start, i + 1).trim();
+      }
+    }
+  }
+  return null;
+}
+
+function parseJSONFromText<T = unknown>(text: string): T | null {
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as T;
+  } catch (_) {
+    // ignore and try extraction
+  }
+  const candidate = extractFirstJsonObject(text);
+  if (!candidate) return null;
+  try {
+    return JSON.parse(candidate) as T;
+  } catch (_) {
+    return null;
+  }
+}
+
 function getRoundPlan(teamMem: TeamMemory, roundNumber: number): { usedSamples: string[]; fallbackVoteSubmissionId?: string } {
   const key = String(roundNumber);
   const plans: any = (teamMem as any).roundPlans ?? ((teamMem as any).roundPlans = {});
@@ -314,6 +375,21 @@ export function scheduleAIVotesForRound(
       ensureMem(p).notes.push(`Round ${round.roundNumber}: fallback vote=${targetId}`);
     }
   }, safetyDelay);
+}
+
+// Fast-track: when all humans have voted, accelerate remaining AI votes now
+export function fastTrackAIVotesForRound(
+  game: Game,
+  round: Round,
+  voteFn?: (game: Game, round: Round, vote: Vote) => void
+) {
+  if (round.status !== "VOTING") return;
+  for (const p of game.players) {
+    if (!p.isAI || !p.alive) continue;
+    if (round.votes.find((v) => v.voterId === p.playerId)) continue;
+    const jitter = 50 + Math.floor(Math.random() * 200);
+    setTimeout(() => void handleAIVote(game, round, p, voteFn), jitter);
+  }
 }
 
 export function notifyAIsOfVote(game: Game, round: Round, vote: Vote) {
@@ -570,7 +646,8 @@ async function generateVoteWithModel(
 
   const raw = cleanSingleLine((response.output_text ?? "").trim());
   if (!raw) return null;
-  const parsed = JSON.parse(raw) as Partial<VoteModelOutput>;
+  const parsed = parseJSONFromText<Partial<VoteModelOutput>>(raw);
+  if (!parsed) return null;
   if (!parsed.submission) return null;
   if (!allowedSubmissions.includes(parsed.submission)) return null;
   return { submission: parsed.submission };
@@ -748,7 +825,8 @@ async function generateWithModel(
   const raw = cleanSingleLine((response.output_text ?? "").trim());
   if (!raw) return null;
 
-  const parsed = JSON.parse(raw) as Partial<ModelOutput>;
+  const parsed = parseJSONFromText<Partial<ModelOutput>>(raw);
+  if (!parsed) return null;
   const submission = truncateToLimit(parsed.submission ?? "", 140);
   const team_note = truncateToLimit(parsed.team_note ?? "", 80);
   if (!submission) return null;
