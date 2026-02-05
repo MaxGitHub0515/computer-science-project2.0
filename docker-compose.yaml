@@ -1,33 +1,49 @@
+version: "3.9"
+
 services:
   frontend:
-    build: ./client
-    ports:
-      - "3500:3000"
-    depends_on:
-      - backend
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    image: computer-science-project20-frontend:latest
     networks:
       - app-network
 
   backend:
-    build: ./server
-    ports:
-      - "8001:8001"
+    build:
+      context: ./server
+      dockerfile: Dockerfile
     environment:
-      - PORT=8001
+      - PORT=5000
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-    env_file:
-      - ./.env
     networks:
       - app-network
+
   toxicity:
-    build: ./toxicity/ai-service
-    ports: 
-      - "8080:8080"
-    depends_on:
-      - backend
+    build:
+      context: ./toxicity/ai-service
+      dockerfile: Dockerfile
+    environment:
+      - PORT=8080
     networks:
       - app-network
-  
+# REVERSE PROXY
+  nginx:
+    image: nginx:1.24-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - frontend
+      - backend
+      - toxicity
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge
+

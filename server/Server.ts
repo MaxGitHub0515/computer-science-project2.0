@@ -40,8 +40,9 @@ const io = new SocketIOServer(httpServer, {
 registerSocketHandlers(io);
 
 // Local Server only - not for production
-const LOCAL_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8001;
+const PORT = process.env.PORT || 5000;
 
-httpServer.listen(LOCAL_PORT, () => {
-  logger.info(`HTTP+WS server running on http://localhost:${LOCAL_PORT}`);
+// Listen on all interfaces, not just localhost
+httpServer.listen(PORT, "0.0.0.0", () => {
+  logger.info(`HTTP+WS server running on http://0.0.0.0:${PORT}`);
 });
