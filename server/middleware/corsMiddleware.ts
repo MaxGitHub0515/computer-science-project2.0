@@ -7,8 +7,10 @@ import type { RequestHandler } from "express";
 const configCors = (): RequestHandler => {
         const allowedOrigins: string[] = [
             'http://localhost:3000', // front in development
-            'https://among-bots.onrender.com' // app in production
-        ]
+            'https://amongbots.illustrates.dev', // app in production:client
+            'https://api.amongbots.illustrates.dev', // app in production:server
+            'https://toxicity.amongbots.illustrates.dev' // app in production:llm-toxicity
+        ];
         const corsOptions : CorsOptions = {
             origin: (origin, callback) => {
             // if undefined or not in allowed list
