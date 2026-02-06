@@ -83,6 +83,8 @@ Users who subscribe to the Premium version of Among Bots support the server cost
 * **Cosmetics:** Unique avatar borders and chat bubble styles.
 
 ---
+## Architecture
+![AmongBots Architecture](./.github/assets/images/prod-web-scheme-arch.png)
 
 ## 🚀 Local Development Setup
 
@@ -98,3 +100,17 @@ Launch the entire ecosystem with a single command:
 ```bash
 # Build and start all services
 docker-compose up --build
+# Stop all running containers
+docker-compose down
+# Run in detached mode
+docker-compose up -d
+# Check the logs
+docker-compose logs
+# Check the logs for specific service e.g backend, nginx
+docker-compose logs -f <service>
+# Open a shell inside a running container
+docker-compose exec <service> sh
+# Runs a one-time command in a new container
+docker-compose run --rm <service> sh
+# List running containers
+docker ps
