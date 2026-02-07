@@ -1,11 +1,11 @@
 // src/lib/socket.ts
 import { io, Socket } from "socket.io-client";
 
-const BACKEND_PORT = 8001;
+// const BACKEND_PORT = 8001; local development only
 
 const SERVER_URL =
   (typeof process !== "undefined" && process.env.SERVER_URL) ||
-  `${window.location.protocol}//${window.location.hostname}:${BACKEND_PORT}`;
+  `${window.location.protocol}//${window.location.hostname}`;
 
 export const socket: Socket = io(SERVER_URL, {
   autoConnect: true,

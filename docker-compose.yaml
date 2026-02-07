@@ -6,6 +6,8 @@ services:
       context: ./client
       dockerfile: Dockerfile
     image: computer-science-project20-frontend:latest
+    environment:
+      - SERVER_URL=https://api.amongbots.illustrates.dev
     networks:
       - app-network
 
