@@ -13,6 +13,8 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+    volumes:
+      - ./server/.env.local:/app/.env.local:ro
     environment:
       - PORT=5000
       - OPENAI_API_KEY=${OPENAI_API_KEY}
