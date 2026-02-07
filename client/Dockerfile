@@ -3,6 +3,10 @@ FROM node:20 AS build
 
 WORKDIR /app
 
+# Build-time argument for SERVER_URL
+ARG SERVER_URL
+ENV SERVER_URL=$SERVER_URL
+
 # Copy only package files first to install dependencies
 COPY package.json yarn.lock ./
 
