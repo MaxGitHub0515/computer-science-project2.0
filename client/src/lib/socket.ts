@@ -3,9 +3,10 @@ import { io, Socket } from "socket.io-client";
 
 // const BACKEND_PORT = 8001; local development only
 
-const SERVER_URL =
-  (typeof process !== "undefined" && process.env.SERVER_URL) ||
-  `${window.location.protocol}//${window.location.hostname}`;
+// const SERVER_URL =
+//   (typeof process !== "undefined" && process.env.SERVER_URL) ||
+//   `${window.location.protocol}//${window.location.hostname}`;
+const SERVER_URL = process.env.SERVER_URL!;
 
 export const socket: Socket = io(SERVER_URL, {
   autoConnect: true,
