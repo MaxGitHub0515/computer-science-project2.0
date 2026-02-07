@@ -1,4 +1,5 @@
 // webpack.config.cjs
+const webpack = require("webpack");
 const path = require("path");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 
@@ -46,6 +47,9 @@ module.exports = {
   plugins: [
     new HtmlWebpackPlugin({
       template: "index.html", // your client/index.html
+    }),
+    new webpack.DefinePlugin({
+      "process.env.SERVER_URL": JSON.stringify(process.env.SERVER_URL || ""),
     }),
   ],
 
