@@ -25,6 +25,7 @@ services:
       - SUBMIT_DURATION_MS=45000
       - VOTE_DURATION_MS=30000
       - LOG_LEVEL=info
+      - AI_DEBUG=true
     networks:
       - app-network
 

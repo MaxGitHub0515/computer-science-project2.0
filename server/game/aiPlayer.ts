@@ -17,6 +17,8 @@ type TeamMemory = NonNullable<Game["aiTeamMemory"]>[string];
 
 const TOXICITY_URL = process.env.TOXICITY_URL?.trim() || "http://toxicity:8080";
 
+// Enable verbose AI / OpenAI debugging when `AI_DEBUG` env var is set to "1" or "true"
+const AI_DEBUG = (process.env.AI_DEBUG === "1" || process.env.AI_DEBUG === "true") ?? false;
 const openaiClientCache = new Map<string, OpenAI>();
 
 function normalizeOptString(s: string | undefined): string | undefined {
@@ -45,6 +47,12 @@ function getOpenAIClient(apiKey?: string): OpenAI | null {
   if (!client) {
     client = new OpenAI({ apiKey: key });
     openaiClientCache.set(key, client);
+    try {
+      const safeKey = `${key.slice(0, 6)}...${key.slice(-6)}`;
+      logger.info(`[AI DEBUG] Created OpenAI client for key=${safeKey}`);
+    } catch (_) {
+      // ignore logging failures
+    }
   }
   return client;
 }
@@ -372,7 +380,10 @@ export function scheduleAIForRound(
   round: Round,
   submitFn?: (game: Game, round: Round, submission: Submission) => void
 ) {
-  if (!allHumanParticipantsSubmitted(game, round)) return;
+  if (!allHumanParticipantsSubmitted(game, round)) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] scheduleAIForRound: not scheduling AIs yet for game=${game.code} round=${round.roundNumber} (waiting for human submissions)`);
+    return;
+  }
 
   const now = Date.now();
   const expiresAt = round.expiresAt ?? now + 30_000;
@@ -383,6 +394,7 @@ export function scheduleAIForRound(
     if (round.submissions.find((s) => s.playerId === p.playerId)) continue;
 
     const delay = Math.max(500, Math.floor(remaining * (0.15 + Math.random() * 0.25)));
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] scheduleAIForRound: scheduling AI submit for ${p.alias ?? p.playerId} in ${delay}ms (game=${game.code} round=${round.roundNumber})`);
     setTimeout(() => void handleAISubmit(game, round, p, submitFn), delay);
   }
 }
@@ -445,11 +457,14 @@ export function scheduleAIVotesForRound(
   const expiresAt = round.expiresAt ?? now + 30_000;
   const remaining = Math.max(1500, expiresAt - now);
 
+  if (AI_DEBUG) logger.debug(`[AI DEBUG] scheduleAIVotesForRound: scheduling votes for game=${game.code} round=${round.roundNumber} remaining=${remaining}ms`);
+
   for (const p of game.players) {
     if (!p.isAI || !p.alive) continue;
     if (round.votes.find((v) => v.voterId === p.playerId)) continue;
 
     const delay = Math.max(500, Math.floor(remaining * (0.25 + Math.random() * 0.5)));
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] scheduleAIVotesForRound: scheduling AI vote for ${p.alias ?? p.playerId} in ${delay}ms`);
     setTimeout(() => void handleAIVote(game, round, p, voteFn), delay);
   }
 
@@ -467,6 +482,7 @@ export function scheduleAIVotesForRound(
     const pool = humanSubs.length > 0 ? humanSubs : round.submissions;
     const pick = pool.length > 0 ? pickRandom(pool) : undefined;
     if (pick) plan.fallbackVoteSubmissionId = pick.submissionId;
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] scheduleAIVotesForRound: computed fallbackVoteSubmissionId=${plan.fallbackVoteSubmissionId} for game=${game.code} round=${round.roundNumber}`);
   }
 
   const safetyDelay = Math.max(0, (expiresAt - Date.now()) - 250);
@@ -579,10 +595,22 @@ async function handleAISubmit(
   aiPlayer: Player,
   submitFn?: (game: Game, round: Round, submission: Submission) => void
 ) {
-  if (round.status !== "SUBMITTING") return;
-  if (!aiPlayer.alive) return; // dead AIs must not submit
-  if (round.submissions.find((s) => s.playerId === aiPlayer.playerId)) return;
-  if (!allHumanParticipantsSubmitted(game, round)) return;
+  if (round.status !== "SUBMITTING") {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAISubmit: skipping because round.status=${round.status}`);
+    return;
+  }
+  if (!aiPlayer.alive) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAISubmit: skipping dead AI ${aiPlayer.alias ?? aiPlayer.playerId}`);
+    return; // dead AIs must not submit
+  }
+  if (round.submissions.find((s) => s.playerId === aiPlayer.playerId)) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAISubmit: AI ${aiPlayer.alias ?? aiPlayer.playerId} already submitted for round ${round.roundNumber}`);
+    return;
+  }
+  if (!allHumanParticipantsSubmitted(game, round)) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAISubmit: waiting for human submissions before AI ${aiPlayer.alias ?? aiPlayer.playerId} submits`);
+    return;
+  }
 
   const submissionResult = await buildAISubmissionContent(game, round, aiPlayer);
   const content = submissionResult.text;
@@ -641,9 +669,18 @@ async function handleAIVote(
   aiPlayer: Player,
   voteFn?: (game: Game, round: Round, vote: Vote) => void
 ) {
-  if (round.status !== "VOTING") return;
-  if (!aiPlayer.alive) return; // dead AIs must not vote
-  if (round.votes.find((v) => v.voterId === aiPlayer.playerId)) return;
+  if (round.status !== "VOTING") {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAIVote: skipping because round.status=${round.status}`);
+    return;
+  }
+  if (!aiPlayer.alive) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAIVote: skipping dead AI ${aiPlayer.alias ?? aiPlayer.playerId}`);
+    return; // dead AIs must not vote
+  }
+  if (round.votes.find((v) => v.voterId === aiPlayer.playerId)) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAIVote: AI ${aiPlayer.alias ?? aiPlayer.playerId} already voted`);
+    return;
+  }
 
   // Build full visibility for model: all current submissions with authors and current votes so far
   const visibleSubs = round.submissions.map((s) => {
@@ -688,6 +725,7 @@ async function handleAIVote(
   if (haveKey) {
     try {
       const prompt = await buildAIVotePrompt(game, round, aiPlayer, visibleSubs, votesSoFar);
+      if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAIVote: calling model for ${aiPlayer.alias ?? aiPlayer.playerId} with allowedAliases=${allowedAliases.join(",")}`);
       const out = await generateVoteWithModel(aiPlayer.aiData?.apiKey, prompt, allowedAliases);
       if (out?.author_alias) {
         const matches = aliasToSubmissions.get(out.author_alias) ?? [];
@@ -715,6 +753,8 @@ async function handleAIVote(
   else round.votes.push(vote);
   notifyAIsOfVote(game, round, vote);
   ensureMem(aiPlayer).notes.push(`Round ${round.roundNumber}: voted=${chosen}`);
+
+  if (AI_DEBUG) logger.debug(`[AI DEBUG] handleAIVote: AI ${aiPlayer.alias ?? aiPlayer.playerId} voted=${chosen} method=${method}`);
 
   try {
     const sanitizedOptions: Array<{ submissionId: string; alias: string; color: string; isAI: boolean; content: string; sanitized?: boolean }> = [];
@@ -827,19 +867,26 @@ async function generateVoteWithModel(
     additionalProperties: false,
   } as const;
 
-  const response = await client.responses.create({
-    model,
-    instructions,
-    input: prompt,
-    reasoning: { effort: "none" },
-    text: {
-      verbosity: "low",
-      format: { type: "json_schema", name: "round_vote", strict: true, schema },
-    },
-    temperature: 0.3,
-    max_output_tokens: 40,
-    store: false,
-  } as any);
+  let response: any;
+  try {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] generateVoteWithModel request: model=${model} prompt=${truncateToLimit(prompt,300)} schemaEnumCount=${(allowedAliases||[]).length}`);
+    response = await client.responses.create({
+      model,
+      instructions,
+      input: prompt,
+      reasoning: { effort: "none" },
+      text: {
+        verbosity: "low",
+        format: { type: "json_schema", name: "round_vote", strict: true, schema },
+      },
+      temperature: 0.3,
+      max_output_tokens: 40,
+      store: false,
+    } as any);
+  } catch (e) {
+    logger.warn(`[AI DEBUG] generateVoteWithModel: OpenAI request failed: ${String(e)}`);
+    return null;
+  }
 
   const raw = cleanSingleLine((response.output_text ?? "").trim());
   if (!raw) return null;
@@ -848,6 +895,7 @@ async function generateVoteWithModel(
   if (!parsed.author_alias) return null;
   if (allowedAliases.length && !allowedAliases.includes(parsed.author_alias)) return null;
   if (!parsed.team_note) return null;
+  if (AI_DEBUG) logger.debug(`[AI DEBUG] generateVoteWithModel response raw=${truncateToLimit(raw,300)} parsed=${JSON.stringify(parsed)}`);
   return { author_alias: parsed.author_alias, team_note: parsed.team_note };
 }
 
@@ -1019,12 +1067,28 @@ async function generateWithModel(
   store: false,
 } as const;
 
-  const response = await client.responses.create(requestPayload as any);
+  let response: any;
+  try {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] generateWithModel request: model=${model} targetChars=${targetChars} prompt=${truncateToLimit(prompt,300)}`);
+    response = await client.responses.create(requestPayload as any);
+  } catch (e) {
+    logger.warn(`[AI DEBUG] generateWithModel: OpenAI request failed: ${String(e)}`);
+    return null;
+  }
+
   const raw = cleanSingleLine((response.output_text ?? "").trim());
-  if (!raw) return null;
+  if (!raw) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] generateWithModel: empty output_text`);
+    return null;
+  }
 
   const parsed = parseJSONFromText<Partial<ModelOutput>>(raw);
-  if (!parsed) return null;
+  if (!parsed) {
+    if (AI_DEBUG) logger.debug(`[AI DEBUG] generateWithModel: failed to parse JSON from raw=${truncateToLimit(raw,300)}`);
+    return null;
+  }
+  if (AI_DEBUG) logger.debug(`[AI DEBUG] generateWithModel response raw=${truncateToLimit(raw,300)} parsed=${JSON.stringify(parsed)}`);
+
   const submission = truncateToLimit(parsed.submission ?? "", 140);
   const team_note = truncateToLimit(parsed.team_note ?? "", 80);
   if (!submission) return null;
