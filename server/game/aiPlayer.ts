@@ -1151,12 +1151,13 @@ async function assessAndCache(mem: AIMemory, original: string): Promise<Toxicity
 
   const resp = await callToxicityService(original);
   if (!resp) {
-    const { replacedText, summary } = buildReplacement(undefined, "toxicity model unavailable");
+    // Toxicity service unavailable — do not replace user text. Treat as non-toxic
+    // so that AIs receive the original content when the service cannot be reached.
     const assessment: ToxicityAssessment = {
-      isToxic: true,
+      isToxic: false,
       scores: {},
-      replacedText,
-      ...(summary ? { summary } : {}),
+      replacedText: original,
+      summary: "toxicity model unavailable",
     } as ToxicityAssessment;
     cache[key] = assessment;
     return assessment;
