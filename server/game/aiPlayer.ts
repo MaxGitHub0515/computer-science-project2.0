@@ -1123,13 +1123,19 @@ function pickTopCategories(scores: Record<string, number>, threshold = 0.5, maxC
 
 async function callToxicityService(text: string): Promise<{ is_toxic: boolean; detailed_scores?: Record<string, number> } | null> {
   try {
+    if (AI_DEBUG) logger.info(`[TOXICITY] sending request to ${TOXICITY_URL}/predict text=${truncateToLimit(text,200)}`);
     const res = await fetch(`${TOXICITY_URL}/predict`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     } as any);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const statusText = `HTTP ${res.status}`;
+      logger.warn(`[TOXICITY] service returned non-OK status: ${statusText}`);
+      throw new Error(statusText);
+    }
     const data = (await res.json()) as any;
+    if (AI_DEBUG) logger.info(`[TOXICITY] received response is_toxic=${!!data.is_toxic} for text=${truncateToLimit(text,200)}`);
     return { is_toxic: !!data.is_toxic, detailed_scores: data.detailed_scores ?? {} };
   } catch (e) {
     logger.warn(`Toxicity service error: ${String(e)}`);
@@ -1160,6 +1166,7 @@ async function assessAndCache(mem: AIMemory, original: string): Promise<Toxicity
       summary: "toxicity model unavailable",
     } as ToxicityAssessment;
     cache[key] = assessment;
+    logger.info(`[TOXICITY] unavailable -> preserving original text for assessment key=${truncateToLimit(key,120)}`);
     return assessment;
   }
 
@@ -1172,10 +1179,12 @@ async function assessAndCache(mem: AIMemory, original: string): Promise<Toxicity
       ...(summary ? { summary } : {}),
     } as ToxicityAssessment;
     cache[key] = assessment;
+    logger.info(`[TOXICITY] assessed TOXIC for key=${truncateToLimit(key,120)} categories=${pickTopCategories(resp.detailed_scores ?? {}, 0.0, 5).join(", ")}`);
     return assessment;
   } else {
     const assessment: ToxicityAssessment = { isToxic: false, scores: resp.detailed_scores ?? {}, replacedText: original };
     cache[key] = assessment;
+    logger.info(`[TOXICITY] assessed NOT_TOXIC for key=${truncateToLimit(key,120)}`);
     return assessment;
   }
 }
@@ -1199,6 +1208,7 @@ async function sanitizeContentForAI(
   if (existing) {
     // Mirror into personal cache too
     mem.toxicityCache![original] = existing;
+    if (AI_DEBUG) logger.info(`[TOXICITY] cache hit (team) for text=${truncateToLimit(original,120)} sanitized=${existing.isToxic}`);
     return { text: existing.isToxic ? existing.replacedText : original, sanitized: existing.isToxic };
   }
 
