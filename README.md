@@ -114,3 +114,13 @@ docker-compose exec <service> sh
 docker-compose run --rm <service> sh
 # List running containers
 docker ps
+
+``` 
+
+## 📚 Docs
+This project documentation is available in both **English** and **German**.
+- Please choose your preferred language below:
+
+    - 🇬🇧 [English Documentation](.github/assets/docs/pdf/Among%20Bots%20Abschlussbericht-en.pdf)
+    - 🇩🇪 [Deutsche Dokumentation](.github/assets/docs/pdf/Among%20Bots%20Abschlussbericht-de.pdf)
+
